@@ -61,7 +61,7 @@ impl FundInstruction {
         let mut input_slice = input;
 
         for _i in 0..num_members {
-            let (key, rest) = input.split_at(PUBKEY_BYTES);
+            let (key, rest) = input_slice.split_at(PUBKEY_BYTES);
             let pubkey = Pubkey::new_from_array(key.try_into().expect("Invalid Pubkey Length"));
             pubkey_vec.push(pubkey);
             input_slice = rest;
@@ -71,12 +71,25 @@ impl FundInstruction {
     }
 
     fn unpack_amount(input: &[u8]) -> Result<(u64, &[u8]), ProgramError> {
-        let (&amount, rest) = input.split_at(BYTE_SIZE_8);
+        if input.len() < BYTE_SIZE_8 {
+            msg!("Amount cannot be unpacked");
+            return Err(FundError::InstructionUnpackError.into());
+        }
+        let (amount_bytes, rest) = input.split_at(BYTE_SIZE_8);
 
+        let amount = u64::from_le_bytes(amount_bytes.try_into().expect("Invalid amount length"));
 
+        Ok((amount, rest))
     }
 
     fn unpack_mint(input: &[u8]) -> Result<(Pubkey, &[u8]), ProgramError> {
+        if input.len() < PUBKEY_BYTES {
+            msg!("Governance Mint cannot be unpacked");
+            return Err(FundError::InstructionUnpackError.into());
+        }
+        let (governance_key, rest) = input.split_at(PUBKEY_BYTES);
 
+        let governance_mint = Pubkey::new_from_array(governance_key.try_into().expect("Invalid Pubkey Length"));
+        Ok((governance_mint, rest))
     }
 }

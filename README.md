@@ -41,7 +41,7 @@ Built for speed, built for control, built on Solana.
 ### Build & Deploy
 ```bash
 # Clone this repo
-git clone https://github.com/your-username/investment-fund.git
+git clone https://github.com/Shivam-Gujjar-Boy/investment-fund.git
 cd investment-fund
 
 # Build the program

@@ -1,7 +1,7 @@
+use std::vec;
 use solana_program::{
     program_error::ProgramError,
-    pubkey::{Pubkey, PUBKEY_BYTES},
-    msg
+    pubkey::Pubkey,
 };
 use crate::errors::FundError;
 use borsh::{BorshSerialize, BorshDeserialize};
@@ -35,11 +35,22 @@ pub enum FundInstruction {
     },
 
     // Proposals can be of the following types:
-    // 1. Investment
-    // 2. Addition of New Member
-    // 3. Removal of any member
-    // 4. Withdrawl
-    Propose { asset: Pubkey, amount: u64, dex: Pubkey, deadline: i64 },
+    // 1. Investment -> tag 0
+    // 2. Addition of New Member -> tag 1
+    // 3. Removal of any member -> tag 2
+    // 4. Withdrawl -> tag 3
+
+    // 1. Proposer Account
+    // 2. [..] From Assets Mints
+    // 3. [..] To Assets Mints
+    InitProposalInvestment {
+        amounts: Vec<u64>,
+        dex_tags: Vec<u8>,
+        deadline: i64,
+    },
+
+    ExecuteProposalInvestment {},
+
     Vote { proposal: Pubkey, yes: bool, amount: u64 },
     Execute { proposal: Pubkey },
 }
@@ -65,8 +76,22 @@ impl FundInstruction {
                     amount,
                 }
             }
+            2 => {
+                let (&num_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (amounts, rest) = Self::unpack_amounts(rest, num_of_swaps)?;
+                let (dex_tags, rest) = Self::unpack_dex_tags(rest, num_of_swaps)?;
+                let (deadline, _rest) = Self::unpack_deadline(rest)?;
+
+                Self::InitProposalInvestment {
+                    amounts,
+                    dex_tags,
+                    deadline,
+                }
+            }
+            3 => {
+                Self::ExecuteProposalInvestment {}
+            }
             _ => {
-                msg!("Instruction cannot be unpacked");
                 return Err(FundError::InstructionUnpackError.into());
             }
         })
@@ -81,32 +106,8 @@ impl FundInstruction {
         Ok((num, rest))
     }
 
-    // fn unpack_pubkeys(input: &[u8]) -> Result<(Vec<Pubkey>, &[u8]), ProgramError> {
-    //     let (&num_members, rest) = input
-    //         .split_first()
-    //         .ok_or(FundError::InstructionUnpackError)?;
-
-    //     if input.len() < PUBKEY_BYTES*(num_members as usize) {
-    //         msg!("Pubkeys cannot be unpacked");
-    //         return Err(FundError::InstructionUnpackError.into());
-    //     }
-
-    //     let mut pubkey_vec : Vec<Pubkey> = Vec::new();
-    //     let mut input_slice = input;
-
-    //     for _i in 0..num_members {
-    //         let (key, rest) = input_slice.split_at(PUBKEY_BYTES);
-    //         let pubkey = Pubkey::new_from_array(key.try_into().expect("Invalid Pubkey Length"));
-    //         pubkey_vec.push(pubkey);
-    //         input_slice = rest;
-    //     }
-
-    //     Ok((pubkey_vec, rest))
-    // }
-
     fn unpack_amount(input: &[u8]) -> Result<(u64, &[u8]), ProgramError> {
         if input.len() < BYTE_SIZE_8 {
-            msg!("Amount cannot be unpacked");
             return Err(FundError::InstructionUnpackError.into());
         }
         let (amount_bytes, rest) = input.split_at(BYTE_SIZE_8);
@@ -116,14 +117,45 @@ impl FundInstruction {
         Ok((amount, rest))
     }
 
-    // fn unpack_mint(input: &[u8]) -> Result<(Pubkey, &[u8]), ProgramError> {
-    //     if input.len() < PUBKEY_BYTES {
-    //         msg!("Governance Mint cannot be unpacked");
-    //         return Err(FundError::InstructionUnpackError.into());
-    //     }
-    //     let (governance_key, rest) = input.split_at(PUBKEY_BYTES);
+    fn unpack_amounts(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u64>, &[u8]), ProgramError> {
+        if input.len() < BYTE_SIZE_8*(num_of_swaps as usize) {
+            return Err(FundError::InstructionUnpackError.into());
+        }
 
-    //     let governance_mint = Pubkey::new_from_array(governance_key.try_into().expect("Invalid Pubkey Length"));
-    //     Ok((governance_mint, rest))
-    // }
+        let mut amounts: Vec<u64> = vec![];
+        let mut input_slice = input;
+        for _i in 0..num_of_swaps {
+            let (amount, rest) = Self::unpack_amount(input_slice)?;
+            amounts.push(amount);
+            input_slice = rest;
+        }
+
+        Ok((amounts, input_slice))
+    }
+
+    fn unpack_dex_tags(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u8>, &[u8]), ProgramError> {
+        if input.len() < num_of_swaps as usize {
+            return Err(FundError::InstructionUnpackError.into());
+        }
+
+        let mut dex_tags: Vec<u8> = vec![];
+        let mut input_slice = input;
+        for _i in 0..num_of_swaps {
+            let (dex_tag, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;
+            dex_tags.push(*dex_tag);
+            input_slice = rest;
+        }
+
+        Ok((dex_tags, input_slice))
+    }
+
+    fn unpack_deadline(input: &[u8]) -> Result<(i64, &[u8]), ProgramError> {
+        if input.len() < BYTE_SIZE_8 {
+            return Err(FundError::InstructionUnpackError.into());
+        }
+
+        let (deadline_data, rest) = input.split_at(BYTE_SIZE_8);
+        let deadline = i64::from_le_bytes(deadline_data.try_into().expect("Failed to get Deadline"));
+        Ok((deadline, rest))
+    }
 }

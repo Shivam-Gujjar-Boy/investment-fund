@@ -49,9 +49,13 @@ pub enum FundInstruction {
         deadline: i64,
     },
 
-    ExecuteProposalInvestment {},
+    Vote {
+        proposal: Pubkey,
+        yes: bool,
+        amount: u64
+    },
 
-    Vote { proposal: Pubkey, yes: bool, amount: u64 },
+    ExecuteProposalInvestment {},
     Execute { proposal: Pubkey },
 }
 
@@ -89,6 +93,9 @@ impl FundInstruction {
                 }
             }
             3 => {
+
+            }
+            4 => {
                 Self::ExecuteProposalInvestment {}
             }
             _ => {
@@ -122,7 +129,7 @@ impl FundInstruction {
             return Err(FundError::InstructionUnpackError.into());
         }
 
-        let mut amounts: Vec<u64> = vec![];
+        let mut amounts: Vec<u64> = Vec::new();
         let mut input_slice = input;
         for _i in 0..num_of_swaps {
             let (amount, rest) = Self::unpack_amount(input_slice)?;
@@ -138,7 +145,7 @@ impl FundInstruction {
             return Err(FundError::InstructionUnpackError.into());
         }
 
-        let mut dex_tags: Vec<u8> = vec![];
+        let mut dex_tags: Vec<u8> = Vec::new();
         let mut input_slice = input;
         for _i in 0..num_of_swaps {
             let (dex_tag, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;

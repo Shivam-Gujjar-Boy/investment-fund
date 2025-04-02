@@ -65,8 +65,14 @@ fn process_init_fund_account(
     }
 
     let member_pubkeys: Vec<Pubkey> = members.iter().map(|m| *m.key).collect();
-    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", &member_pubkeys.as_ref().sort()], program_id);
-    let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
+    let mut seeds: Vec<u8> = Vec::new();
+    seeds.extend_from_slice(b"fund");
+    // for pubkey in member_pubkeys {
+    //     seeds.extend_from_slice(pubkey.as_ref());
+    // }
+    let seeds_array: &[u8] = &seeds;
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[seeds_array], program_id);
+    let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
     let (rent_pda, rent_bump) = Pubkey::find_program_address(&[b"rent_69"], program_id);
     if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *rent_account_info.key != rent_pda {
         return Err(FundError::InvalidAccountData.into());
@@ -82,7 +88,7 @@ fn process_init_fund_account(
     for member in &members {
         invoke(
             &system_instruction::transfer(member.key, rent_account_info.key, rent_per_member),
-            &[*member.clone(), fund_account_info.clone(), system_program_info.clone()],
+            &[(*member).clone(), fund_account_info.clone(), system_program_info.clone()],
         )?;
     }
 
@@ -334,17 +340,17 @@ fn process_init_investment_proposal(
 
     let to_assets_mints: Vec<Pubkey> = to_assets_info.iter().map(|m| *m.key).collect();
 
-
-    let mut proposal_data = InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
-    proposal_data.proposer = *proposer_account_info.key;
-    proposal_data.from_assets = from_assets_mints;
-    proposal_data.to_assets = to_assets_mints;
-    proposal_data.amounts = amounts;
-    proposal_data.dex_tags = dex_tags;
-    proposal_data.deadline = deadline;
-    proposal_data.votes_yes = 0;
-    proposal_data.votes_no = 0;
-    proposal_data.executed = false;
+    let proposal_data = InvestmentProposalAccount {
+        proposer: *proposer_account_info.key,
+        from_assets: from_assets_mints,
+        to_assets: to_assets_mints,
+        amounts,
+        dex_tags,
+        deadline,
+        votes_yes: 0,
+        votes_no: 0,
+        executed: false
+    };
     proposal_data.serialize(&mut &mut proposal_account_info.data.borrow_mut()[..])?;
 
     Ok(())

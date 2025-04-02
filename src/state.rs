@@ -6,6 +6,7 @@ pub struct FundAccount {
     pub members: Vec<Pubkey>,
     pub total_deposit: u64,
     pub governance_mint: Pubkey,
+    pub vault: Pubkey,
     pub is_initialized: bool,
 }
 

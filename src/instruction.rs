@@ -29,9 +29,16 @@ pub enum FundInstruction {
     // 5. Token Program
     // 6. Member's Governance Token Account
     // 7. Member's Wallet
+    // 8. User-specific PDA
     InitDepositSol {
         amount: u64
     },
+
+    // Proposals can be of the following types:
+    // 1. Investment
+    // 2. Addition of New Member
+    // 3. Removal of any member
+    // 4. Withdrawl
     Propose { asset: Pubkey, amount: u64, dex: Pubkey, deadline: i64 },
     Vote { proposal: Pubkey, yes: bool, amount: u64 },
     Execute { proposal: Pubkey },

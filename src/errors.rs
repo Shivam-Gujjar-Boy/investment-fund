@@ -5,6 +5,8 @@ pub enum FundError {
     InstructionUnpackError,
     MissingRequiredSignature,
     InvalidAccountData,
+    InvalidGovernanceMint,
+    InvalidTokenAccount,
     InvalidInstruction,
     NotEnoughFunds,
 }

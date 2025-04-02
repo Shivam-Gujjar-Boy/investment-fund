@@ -11,6 +11,14 @@ pub struct FundAccount {
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
+pub struct UserSpecificAccount {
+    pub pubkey: Pubkey,
+    pub deposit: u64,
+    pub governance_token_balance: u64,
+    pub is_active: bool,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
 pub struct ProposalAccount {
     pub proposer: Pubkey,
     pub asset: Pubkey,

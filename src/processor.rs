@@ -347,4 +347,6 @@ fn process_init_investment_proposal(
     proposal_data.executed = false;
     proposal_data.serialize(&mut &mut proposal_account_info.data.borrow_mut()[..])?;
 
+    Ok(())
+
 }

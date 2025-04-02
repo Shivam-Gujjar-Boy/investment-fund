@@ -24,11 +24,11 @@ Built for speed, built for control, built on Solana.
 ---
 
 ## How It Works
-1. **Create a Fund**: Deploy a fund with your squad’s pubkeys.
-2. **Deposit**: Throw in SOL or tokens, get governance tokens back.
+1. **Create a Fund**: Create a group, all members sign the transaction. After signing, Fund Account (holds data about the fund as a whole), Governance Mint Account (this is the governance token mint account) and Vault Account (this is the account that will hold the fund's assets) are created. Since this is a multisig transaction, no one can create fund without your permission.
+2. **Deposit**: Deposit is very flexible and secure, no cheating. Whenever a member deposits some amount in the vault account, equal amount of governance tokens are minted to the member's wallet, which represents the individual voting power. So, if some members refuse to deposit their required amount, active members can propose and vote to kick them out. Fully transparent!
 3. **Propose**: Pick an asset, amount, and DEX (Raydium, Orca, etc.).
-4. **Vote**: Use your tokens to yay or nay. Deadline hits, votes lock.
-5. **Execute**: If it passes, the trade fires off on-chain.
+4. **Vote**: Use your tokens to vote in favour or against the proposal. Deadline hits, votes lock.
+5. **Execute**: If it passes, the trade is executed on-chain.
 
 ---
 

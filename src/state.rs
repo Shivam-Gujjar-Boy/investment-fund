@@ -26,8 +26,14 @@ pub struct InvestmentProposalAccount {
     pub to_assets: Vec<Pubkey>,
     pub amounts: Vec<u64>,
     pub dex_tags: Vec<u8>,
-    pub votes_yes: u8,
-    pub votes_no: u8,
+    pub votes_yes: u64,
+    pub votes_no: u64,
     pub deadline: i64,
     pub executed: bool,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct VoteAccount {
+    pub voter: Pubkey,
+    pub vote: u8,
 }

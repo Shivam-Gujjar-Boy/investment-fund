@@ -1,6 +1,6 @@
 use solana_program::{
     program_error::ProgramError,
-    pubkey::Pubkey,
+    pubkey::{Pubkey, PUBKEY_BYTES},
 };
 use crate::errors::FundError;
 use borsh::{BorshSerialize, BorshDeserialize};
@@ -19,6 +19,7 @@ pub enum FundInstruction {
     // 7. [..] Array of Fund Members
     InitFundAccount { 
         number_of_members: u8,
+        fund_name: Vec<u8>,
     },
 
     // 1. Governance Mint Account
@@ -30,7 +31,8 @@ pub enum FundInstruction {
     // 7. Member's Wallet
     // 8. User-specific PDA
     InitDepositSol {
-        amount: u64
+        amount: u64,
+        fund_name: Vec<u8>,
     },
 
     // Proposals can be of the following types:
@@ -46,12 +48,20 @@ pub enum FundInstruction {
         amounts: Vec<u64>,
         dex_tags: Vec<u8>,
         deadline: i64,
+        fund_name: Vec<u8>,
     },
 
+    // 1. Voter Account
+    // 2. Vote Account
+    // 3. Proposal Account
+    // 4. System Program
+    // 5. User PDA Account
+    // 6. Fund Account
+    // 7. Governance Mint Account
+    // 8. Voter Governance Token Account
     Vote {
-        proposal: Pubkey,
-        yes: bool,
-        amount: u64
+        vote: u8,
+        fund_name: Vec<u8>,
     },
 
     ExecuteProposalInvestment {},
@@ -66,33 +76,42 @@ impl FundInstruction {
 
         Ok(match tag {
             0 => {
-                let (num, _rest) = Self::unpack_members(rest)?;
-
+                let (num, rest) = Self::unpack_members(rest)?;
+                let (fund_name, _rest) = Self::unpack_seed(rest)?;
                 Self::InitFundAccount {
                     number_of_members: num,
+                    fund_name,
                 }
             }
             1 => {
-                let (amount, _rest) = Self::unpack_amount(rest)?;
-
+                let (amount, rest) = Self::unpack_amount(rest)?;
+                let (fund_name, _rest) = Self::unpack_seed(rest)?;
                 Self::InitDepositSol {
                     amount,
+                    fund_name,
                 }
             }
             2 => {
                 let (&num_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amounts, rest) = Self::unpack_amounts(rest, num_of_swaps)?;
                 let (dex_tags, rest) = Self::unpack_dex_tags(rest, num_of_swaps)?;
-                let (deadline, _rest) = Self::unpack_deadline(rest)?;
+                let (deadline, rest) = Self::unpack_deadline(rest)?;
+                let (fund_name, _rest) = Self::unpack_seed(rest)?;
 
                 Self::InitProposalInvestment {
                     amounts,
                     dex_tags,
                     deadline,
+                    fund_name,
                 }
             }
             3 => {
-
+                let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                Self::Vote {
+                    vote,
+                    fund_name
+                }
             }
             4 => {
                 Self::ExecuteProposalInvestment {}
@@ -110,6 +129,22 @@ impl FundInstruction {
             .ok_or(FundError::InstructionUnpackError)?;
 
         Ok((num, rest))
+    }
+
+    fn unpack_seed(input: &[u8]) -> Result<(Vec<u8>, &[u8]), ProgramError> {
+        if input.len() < PUBKEY_BYTES {
+            return Err(FundError::InstructionUnpackError.into());
+        }
+
+        let mut seed: Vec<u8> = Vec::new();
+        let mut input_slice = input;
+        for _i in 0..PUBKEY_BYTES {
+            let (byte, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;
+            seed.push(*byte);
+            input_slice = rest;
+        }
+
+        Ok((seed, input_slice))
     }
 
     fn unpack_amount(input: &[u8]) -> Result<(u64, &[u8]), ProgramError> {

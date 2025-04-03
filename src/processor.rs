@@ -1,15 +1,10 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint::ProgramResult,
-    msg,
-    program::{invoke, invoke_signed},
-    pubkey::Pubkey,
-    system_instruction,
-    sysvar::{rent::Rent, Sysvar},
+    account_info::{next_account_info, AccountInfo}, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey::Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar}
 };
+use spl_token::state::Account as TokenAccount;
 use crate::{
-    errors::FundError, instruction::FundInstruction, state::{FundAccount, InvestmentProposalAccount, UserSpecificAccount}
+    errors::FundError, instruction::FundInstruction, state::{FundAccount, InvestmentProposalAccount, UserSpecificAccount, VoteAccount}
 };
 
 pub fn process_instruction(
@@ -20,23 +15,29 @@ pub fn process_instruction(
     let instruction = FundInstruction::unpack(data)?;
     match instruction {
 
-        FundInstruction::InitFundAccount { number_of_members } => {
+        FundInstruction::InitFundAccount { number_of_members , fund_name} => {
             msg!("Instruction: Init Fund Account");
-            process_init_fund_account(program_id, accounts, number_of_members)
+            process_init_fund_account(program_id, accounts, number_of_members, fund_name)
         }
 
-        FundInstruction::InitDepositSol { amount } => {
+        FundInstruction::InitDepositSol { amount , fund_name} => {
             msg!("Instruction: Init Deposit");
-            process_init_deposit_sol(program_id, accounts, amount)
+            process_init_deposit_sol(program_id, accounts, amount, fund_name)
         }
 
         FundInstruction::InitProposalInvestment { 
             amounts,
             dex_tags,
             deadline,
+            fund_name,
         } => {
             msg!("Instruction: Init Proposal");
-            process_init_investment_proposal(program_id, accounts, amounts, dex_tags, deadline)
+            process_init_investment_proposal(program_id, accounts, amounts, dex_tags, deadline, fund_name)
+        }
+
+        FundInstruction::Vote {vote, fund_name} => {
+            msg!("Instruction: Voting on Proposal");
+            process_vote_on_proposal(program_id, accounts, vote, fund_name)
         }
 
         _ => Err(FundError::InvalidInstruction.into()),
@@ -47,6 +48,7 @@ fn process_init_fund_account(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     number_of_members: u8,
+    fund_name: Vec<u8>,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
     let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint
@@ -65,11 +67,7 @@ fn process_init_fund_account(
     }
 
     let member_pubkeys: Vec<Pubkey> = members.iter().map(|m| *m.key).collect();
-    let mut seeds = vec![b"fund" as &[u8]];
-    for pubkey in &member_pubkeys {
-        seeds.push(pubkey.as_ref());
-    }
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&seeds[..], program_id);
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
     let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
     let (rent_pda, rent_bump) = Pubkey::find_program_address(&[b"rent_69"], program_id);
     if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *rent_account_info.key != rent_pda {
@@ -153,7 +151,8 @@ fn process_init_fund_account(
 fn process_init_deposit_sol(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    amount: u64
+    amount: u64,
+    fund_name: Vec<u8>,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
     let governance_mint_info = next_account_info(accounts_iter)?;
@@ -171,12 +170,7 @@ fn process_init_deposit_sol(
     }
 
     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    let member_pubkeys = fund_data.members.clone();
-    let mut seeds = vec![b"fund" as &[u8]];
-    for pubkey in &member_pubkeys {
-        seeds.push(pubkey.as_ref());
-    }
-    let (fund_pda, fund_bump) = Pubkey::find_program_address(&seeds[..], program_id);
+    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
     let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
     if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *user_specific_pda_info.key != user_pda {
@@ -239,7 +233,7 @@ fn process_init_deposit_sol(
             fund_account_info.clone(),
             token_program_info.clone(),
         ],
-        &[&[b"fund", &[fund_bump]], &seeds[..]],
+        &[&[b"fund", &fund_name, &[fund_bump]]],
     )?;
 
     let rent = Rent::get()?;
@@ -280,7 +274,8 @@ fn process_init_investment_proposal(
     accounts: &[AccountInfo],
     amounts: Vec<u64>,
     dex_tags: Vec<u8>,
-    deadline: i64
+    deadline: i64,
+    fund_name: Vec<u8>,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
     let proposer_account_info = next_account_info(accounts_iter)?;
@@ -293,16 +288,10 @@ fn process_init_investment_proposal(
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    let member_pubkeys = fund_data.members.clone();
-    let mut seeds = vec![b"fund" as &[u8]];
-    for pubkey in &member_pubkeys {
-        seeds.push(pubkey.as_ref());
-    }
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&seeds[..], program_id);
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), proposer_account_info.key.as_ref()], program_id);
-    let user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
-    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", proposal_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
+    let mut user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
+    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", proposer_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
     if *fund_account_info.key != fund_pda || *user_specific_pda_info.key != user_pda || *proposal_account_info.key != proposal_pda {
         return Err(FundError::InvalidAccountData.into());
     }
@@ -358,7 +347,92 @@ fn process_init_investment_proposal(
         executed: false
     };
     proposal_data.serialize(&mut &mut proposal_account_info.data.borrow_mut()[..])?;
+    user_data.num_proposals += 1;
+    user_data.serialize(&mut &mut user_specific_pda_info.data.borrow_mut()[..])?;
 
     Ok(())
 
+}
+
+fn process_vote_on_proposal(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    vote: u8,
+    fund_name: Vec<u8>,
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let voter_account_info = next_account_info(accounts_iter)?;
+    let vote_account_info = next_account_info(accounts_iter)?;
+    let proposal_account_info = next_account_info(accounts_iter)?;
+    let system_program_info = next_account_info(accounts_iter)?;
+    let user_specific_pda_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?;
+    let governance_token_mint_info = next_account_info(accounts_iter)?;
+    let voter_token_account_info = next_account_info(accounts_iter)?;
+
+    if !voter_account_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
+    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), voter_account_info.key.as_ref()], program_id);
+    let user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
+    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", voter_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
+    let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"vote", voter_account_info.key.as_ref(), proposal_pda.as_ref()], program_id);
+    let token_account = spl_associated_token_account::get_associated_token_address(
+        voter_account_info.key,
+        governance_token_mint_info.key
+    );
+
+    if *fund_account_info.key != fund_pda ||
+        *user_specific_pda_info.key != user_pda ||
+        *proposal_account_info.key != proposal_pda ||
+        *vote_account_info.key != vote_pda ||
+        token_account != *voter_token_account_info.key {
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let rent = Rent::get()?;
+    let vote_space = 33 as usize;
+    let total_rent = rent.minimum_balance(vote_space);
+
+    if vote_account_info.data_is_empty() {
+        invoke(
+            &system_instruction::create_account(
+                voter_account_info.key,
+                vote_account_info.key,
+                total_rent,
+                vote_space as u64,
+                program_id
+            ),
+            &[
+                voter_account_info.clone(),
+                vote_account_info.clone(),
+                system_program_info.clone(),
+            ]
+        )?;
+
+        let token_account_data = TokenAccount::unpack(&voter_token_account_info.data.borrow())?;
+        let voting_power = token_account_data.amount;
+        let mut proposal_data = InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
+        
+        if vote == 1 {
+            proposal_data.votes_yes += voting_power;
+        } else {
+            proposal_data.votes_no += voting_power;
+        }
+
+        proposal_data.serialize(&mut &mut proposal_account_info.data.borrow_mut()[..])?;
+
+        let vote_data = VoteAccount {
+            voter: *voter_account_info.key,
+            vote,
+        };
+
+        vote_data.serialize(&mut &mut vote_account_info.data.borrow_mut()[..])?;
+    } else {
+        return Err(FundError::AlreadyVoted.into());
+    }
+
+    Ok(())
 }

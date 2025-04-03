@@ -7,6 +7,7 @@ pub enum FundError {
     InvalidAccountData,
     InvalidGovernanceMint,
     AlreadyVoted,
+    VotingCeased,
     InvalidTokenAccount,
     InvalidInstruction,
     NotEnoughFunds,

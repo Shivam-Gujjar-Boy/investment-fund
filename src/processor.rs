@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
-    account_info::{next_account_info, AccountInfo}, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey::Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar}
+    account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey::Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar}
 };
 use spl_token::state::Account as TokenAccount;
 use crate::{
@@ -360,6 +360,8 @@ fn process_vote_on_proposal(
     vote: u8,
     fund_name: Vec<u8>,
 ) -> ProgramResult {
+    let current_time = Clock::get()?.unix_timestamp;
+
     let accounts_iter = &mut accounts.iter();
     let voter_account_info = next_account_info(accounts_iter)?;
     let vote_account_info = next_account_info(accounts_iter)?;
@@ -392,6 +394,11 @@ fn process_vote_on_proposal(
         return Err(FundError::InvalidAccountData.into());
     }
 
+    let mut proposal_data = InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
+    if proposal_data.deadline < current_time {
+        return Err(FundError::VotingCeased.into());
+    }
+
     let rent = Rent::get()?;
     let vote_space = 33 as usize;
     let total_rent = rent.minimum_balance(vote_space);
@@ -414,7 +421,6 @@ fn process_vote_on_proposal(
 
         let token_account_data = TokenAccount::unpack(&voter_token_account_info.data.borrow())?;
         let voting_power = token_account_data.amount;
-        let mut proposal_data = InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
         
         if vote == 1 {
             proposal_data.votes_yes += voting_power;

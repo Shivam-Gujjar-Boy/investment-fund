@@ -1,4 +1,3 @@
-use std::vec;
 use solana_program::{
     program_error::ProgramError,
     pubkey::Pubkey,

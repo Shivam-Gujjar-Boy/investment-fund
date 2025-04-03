@@ -65,13 +65,11 @@ fn process_init_fund_account(
     }
 
     let member_pubkeys: Vec<Pubkey> = members.iter().map(|m| *m.key).collect();
-    let mut seeds: Vec<u8> = Vec::new();
-    seeds.extend_from_slice(b"fund");
-    // for pubkey in member_pubkeys {
-    //     seeds.extend_from_slice(pubkey.as_ref());
-    // }
-    let seeds_array: &[u8] = &seeds;
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[seeds_array], program_id);
+    let mut seeds = vec![b"fund" as &[u8]];
+    for pubkey in &member_pubkeys {
+        seeds.push(pubkey.as_ref());
+    }
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&seeds[..], program_id);
     let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
     let (rent_pda, rent_bump) = Pubkey::find_program_address(&[b"rent_69"], program_id);
     if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *rent_account_info.key != rent_pda {
@@ -173,10 +171,14 @@ fn process_init_deposit_sol(
     }
 
     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    let mut member_pubkeys = fund_data.members.clone();
-    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", &member_pubkeys.as_ref().sort()], program_id);
-    let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
-    let (user_pda, user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
+    let member_pubkeys = fund_data.members.clone();
+    let mut seeds = vec![b"fund" as &[u8]];
+    for pubkey in &member_pubkeys {
+        seeds.push(pubkey.as_ref());
+    }
+    let (fund_pda, fund_bump) = Pubkey::find_program_address(&seeds[..], program_id);
+    let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
+    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
     if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *user_specific_pda_info.key != user_pda {
         return Err(FundError::InvalidAccountData.into());
     }
@@ -237,7 +239,7 @@ fn process_init_deposit_sol(
             fund_account_info.clone(),
             token_program_info.clone(),
         ],
-        &[&[b"fund", &member_pubkeys.sort(), &[fund_bump]]],
+        &[&[b"fund", &[fund_bump]], &seeds[..]],
     )?;
 
     let rent = Rent::get()?;
@@ -292,11 +294,15 @@ fn process_init_investment_proposal(
     }
 
     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    let mut member_pubkeys = fund_data.members.clone();
-    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", &member_pubkeys.as_ref().sort()], program_id);
-    let (user_pda, user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), proposer_account_info.key.as_ref()], program_id);
+    let member_pubkeys = fund_data.members.clone();
+    let mut seeds = vec![b"fund" as &[u8]];
+    for pubkey in &member_pubkeys {
+        seeds.push(pubkey.as_ref());
+    }
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&seeds[..], program_id);
+    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), proposer_account_info.key.as_ref()], program_id);
     let user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
-    let (proposal_pda, proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", proposal_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
+    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", proposal_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
     if *fund_account_info.key != fund_pda || *user_specific_pda_info.key != user_pda || *proposal_account_info.key != proposal_pda {
         return Err(FundError::InvalidAccountData.into());
     }

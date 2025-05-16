@@ -1,8 +1,8 @@
 use solana_program::{
     entrypoint,
-    entrypoint::ProgramResult,
-    pubkey::Pubkey,
-    account_info::AccountInfo
+    // entrypoint::ProgramResult,
+    // pubkey::Pubkey,
+    // account_info::AccountInfo
 };
 use processor::process_instruction;
 

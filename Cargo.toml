@@ -10,7 +10,7 @@ crate-type = ["cdylib", "lib"]
 solana-program = "1.18.4"
 borsh = "0.10"
 borsh-derive = "0.10"
-spl-token = { version = "4.0", features = ["no-entrypoint"]}
+spl-token = { version = "=3.5.0", features = ["no-entrypoint"]}
 thiserror = "1.0"
 spl-associated-token-account = { version = "2.0", features = ["no-entrypoint"]}
 # raydium = { git = "https://github.com/raydium-io/raydium-sdk.git"}

@@ -1,10 +1,19 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
-    account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey::Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar}
+    account_info::{next_account_info, AccountInfo},
+    clock::Clock,
+    entrypoint::ProgramResult,
+    msg,
+    program::{invoke, invoke_signed},
+    program_pack::Pack, pubkey::Pubkey,
+    system_instruction,
+    sysvar::{rent::Rent, Sysvar}
 };
 use spl_token::state::Account as TokenAccount;
 use crate::{
-    errors::FundError, instruction::FundInstruction, state::{FundAccount, InvestmentProposalAccount, UserSpecificAccount, VoteAccount}
+    errors::FundError,
+    instruction::FundInstruction,
+    state::{FundAccount, InvestmentProposalAccount, UserSpecificAccount, VoteAccount}
 };
 
 pub fn process_instruction(
@@ -15,9 +24,14 @@ pub fn process_instruction(
     let instruction = FundInstruction::unpack(data)?;
     match instruction {
 
-        FundInstruction::InitFundAccount { number_of_members , fund_name} => {
+        FundInstruction::InitFundAccount { fund_name} => {
             msg!("Instruction: Init Fund Account");
-            process_init_fund_account(program_id, accounts, number_of_members, fund_name)
+            process_init_fund_account(program_id, accounts, fund_name)
+        }
+
+        FundInstruction::AddFundMember { fund_name } => {
+            msg!("Instruction: Add Fund Member");
+            process_add_member(program_id, accounts, fund_name)
         }
 
         FundInstruction::InitDepositSol { amount , fund_name} => {
@@ -40,6 +54,11 @@ pub fn process_instruction(
             process_vote_on_proposal(program_id, accounts, vote, fund_name)
         }
 
+        FundInstruction::InitRentAccount {  } => {
+            msg!("Instruction: Init Rent Account");
+            process_init_rent_account(program_id, accounts)
+        }
+
         _ => Err(FundError::InvalidInstruction.into()),
     }
 }
@@ -47,7 +66,6 @@ pub fn process_instruction(
 fn process_init_fund_account(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    number_of_members: u8,
     fund_name: Vec<u8>,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
@@ -57,36 +75,42 @@ fn process_init_fund_account(
     let token_program_info = next_account_info(accounts_iter)?; // Token Program (2020)
     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA Account
     let rent_account_info = next_account_info(accounts_iter)?; // Rent PDA Account
+    let creator_wallet_info = next_account_info(accounts_iter)?; // Creator Wallet Address
 
-    let members : Vec<&AccountInfo> = accounts_iter
-        .take(number_of_members as usize)
-        .collect();
-
-    if members.len() != number_of_members as usize || !members.iter().all(|m| m.is_signer) {
+    if !creator_wallet_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let member_pubkeys: Vec<Pubkey> = members.iter().map(|m| *m.key).collect();
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
     let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
-    let (rent_pda, rent_bump) = Pubkey::find_program_address(&[b"rent_69"], program_id);
+    let (rent_pda, rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
     if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *rent_account_info.key != rent_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
     let rent = Rent::get()?;
-    let fund_space = 73 + 32*(number_of_members as usize);
+    let fund_space = 106 + 32 + 32;
     let vault_space = 165;
     let mint_space = 82;
     let total_rent = rent.minimum_balance(fund_space) + rent.minimum_balance(vault_space) + rent.minimum_balance(mint_space);
-    let rent_per_member = total_rent / u64::from(number_of_members);
+    let fee_rent_total = total_rent + total_rent/10;
+    // let rent_per_member = total_rent / u64::from(number_of_members);
 
-    for member in &members {
-        invoke(
-            &system_instruction::transfer(member.key, rent_account_info.key, rent_per_member),
-            &[(*member).clone(), fund_account_info.clone(), system_program_info.clone()],
-        )?;
-    }
+    // for member in &members {
+    //     invoke(
+    //         &system_instruction::transfer(member.key, rent_account_info.key, rent_per_member),
+    //         &[(*member).clone(), fund_account_info.clone(), system_program_info.clone()],
+    //     )?;
+    // }
+
+    invoke(
+        &system_instruction::transfer(
+            creator_wallet_info.key,
+            rent_account_info.key,
+            fee_rent_total
+        ),
+        &[creator_wallet_info.clone(), rent_account_info.clone(), system_program_info.clone()],
+    )?;
 
     invoke_signed(
         &system_instruction::create_account(
@@ -97,7 +121,7 @@ fn process_init_fund_account(
             program_id
         ),
         &[rent_account_info.clone(), fund_account_info.clone(), system_program_info.clone()],
-        &[&[b"rent_69", &[rent_bump]]],
+        &[&[b"rent", &[rent_bump]]],
     )?;
 
     invoke_signed(
@@ -109,7 +133,7 @@ fn process_init_fund_account(
             token_program_info.key
         ),
         &[rent_account_info.clone(), vault_account_info.clone(), system_program_info.clone()],
-        &[&[b"rent_69", &[rent_bump]]],
+        &[&[b"rent", &[rent_bump]]],
     )?;
 
     invoke_signed(
@@ -121,7 +145,7 @@ fn process_init_fund_account(
             token_program_info.key,
         ),
         &[rent_account_info.clone(), governance_mint_info.clone(), system_program_info.clone()],
-        &[&[b"rent_69", &[rent_bump]]],
+        &[&[b"rent", &[rent_bump]]],
     )?;
     invoke(
         &spl_token::instruction::initialize_mint(
@@ -134,18 +158,83 @@ fn process_init_fund_account(
         &[governance_mint_info.clone(), token_program_info.clone()],
     )?;
 
+    let mut dex_program_ids: Vec<(u8, Pubkey)> = Vec::new();
+    dex_program_ids.push((1, *fund_account_info.key));
+
+    let mut member_pubkeys: Vec<Pubkey> = Vec::new();
+    member_pubkeys.push(*creator_wallet_info.key);
+
     let fund_data = FundAccount {
+        creator: *creator_wallet_info.key,
         members: member_pubkeys,
         total_deposit: 0,
         governance_mint: *governance_mint_info.key,
         vault: *vault_account_info.key,
         is_initialized: true,
+        dex_program_ids,
     };
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
     Ok(())
 
 
+}
+
+fn process_add_member(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    fund_name: Vec<u8>,
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let fund_account_info = next_account_info(accounts_iter)?;
+    let member_account_info = next_account_info(accounts_iter)?;
+    let system_program_info = next_account_info(accounts_iter)?;
+
+    if !member_account_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
+
+    if *fund_account_info.key != fund_pda {
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+
+    if fund_data.members.contains(member_account_info.key) {
+        msg!("User is already a member");
+        return Ok(())
+    }
+
+    let current_size = fund_account_info.data_len();
+    let new_size = current_size + 32;
+
+    let rent = Rent::get()?;
+    let new_min_balance = rent.minimum_balance(new_size);
+    let current_balance = fund_account_info.lamports();
+
+    if new_min_balance > current_balance {
+        invoke(
+            &system_instruction::transfer(
+                member_account_info.key,
+                fund_account_info.key,
+                new_min_balance - current_balance,
+            ),
+            &[member_account_info.clone(), fund_account_info.clone(), system_program_info.clone()],
+        )?;
+    }
+
+    invoke_signed(
+        &system_instruction::allocate(fund_account_info.key, new_size as u64),
+        &[fund_account_info.clone(), system_program_info.clone()],
+        &[&[b"fund", &fund_name, &[fund_bump]]]
+    )?;
+    
+    fund_data.members.push(*member_account_info.key);
+    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+
+    Ok(())
 }
 
 fn process_init_deposit_sol(
@@ -394,6 +483,11 @@ fn process_vote_on_proposal(
         return Err(FundError::InvalidAccountData.into());
     }
 
+    let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+    if fund_data.governance_mint != *governance_token_mint_info.key {
+        return Err(FundError::InvalidGovernanceMint.into());
+    }
+
     let mut proposal_data = InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
     if proposal_data.deadline < current_time {
         return Err(FundError::VotingCeased.into());
@@ -442,3 +536,56 @@ fn process_vote_on_proposal(
 
     Ok(())
 }
+
+fn process_init_rent_account(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let rent_account_info = next_account_info(accounts_iter)?;
+    let system_program_info = next_account_info(accounts_iter)?;
+    let god_father_info = next_account_info(accounts_iter)?;
+
+    if !god_father_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
+
+    if *rent_account_info.key != rent_pda {
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let rent = Rent::get()?;
+    let data_len = 0 as usize;
+    let rent_exemption_amount = rent.minimum_balance(data_len);
+
+    invoke(
+        &system_instruction::create_account(
+            god_father_info.key,
+            rent_account_info.key,
+            rent_exemption_amount,
+            data_len as u64,
+            program_id
+        ),
+        &[god_father_info.clone(), rent_account_info.clone(), system_program_info.clone()],
+    )?;
+
+    Ok(())
+}
+
+/* fn process_execute_proposal(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    fund_name: Vec<u8>,
+) -> ProgramResult {
+    let current_time = Clock::get()?.unix_timestamp;
+
+    let accounts_iter = &mut accounts.iter();
+    let proposal_account_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?;
+    let vault_account_info = next_account_info(accounts_iter)?;
+    let system_program_info = next_account_info(accounts_iter)?;
+    let token_program_info = next_account_info(accounts_iter)?;
+}
+*/

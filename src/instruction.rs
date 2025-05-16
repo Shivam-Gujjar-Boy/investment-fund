@@ -18,7 +18,10 @@ pub enum FundInstruction {
     // 6. Rent Account
     // 7. [..] Array of Fund Members
     InitFundAccount { 
-        number_of_members: u8,
+        fund_name: Vec<u8>,
+    },
+
+    AddFundMember {
         fund_name: Vec<u8>,
     },
 
@@ -64,6 +67,15 @@ pub enum FundInstruction {
         fund_name: Vec<u8>,
     },
 
+    InitRentAccount {
+
+    },
+
+    // 1. Proposal Account
+    // 2. Fund Account
+    // 3. Vault Account
+    // 4. System Program
+    // 5. Token Program
     ExecuteProposalInvestment {},
     Execute { proposal: Pubkey },
 }
@@ -76,10 +88,9 @@ impl FundInstruction {
 
         Ok(match tag {
             0 => {
-                let (num, rest) = Self::unpack_members(rest)?;
+                // let (num, rest) = Self::unpack_members(rest)?;
                 let (fund_name, _rest) = Self::unpack_seed(rest)?;
                 Self::InitFundAccount {
-                    number_of_members: num,
                     fund_name,
                 }
             }
@@ -90,7 +101,7 @@ impl FundInstruction {
                     amount,
                     fund_name,
                 }
-            }
+            } 
             2 => {
                 let (&num_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amounts, rest) = Self::unpack_amounts(rest, num_of_swaps)?;
@@ -114,7 +125,14 @@ impl FundInstruction {
                 }
             }
             4 => {
+                let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                Self::AddFundMember { fund_name }
+            }
+            5 => {
                 Self::ExecuteProposalInvestment {}
+            }
+            6 => {
+                Self::InitRentAccount {  }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());
@@ -123,13 +141,13 @@ impl FundInstruction {
 
     }
 
-    fn unpack_members(input: &[u8]) -> Result<(u8, &[u8]), ProgramError> {
-        let (&num, rest) = input
-            .split_first()
-            .ok_or(FundError::InstructionUnpackError)?;
+    // fn unpack_members(input: &[u8]) -> Result<(u8, &[u8]), ProgramError> {
+    //     let (&num, rest) = input
+    //         .split_first()
+    //         .ok_or(FundError::InstructionUnpackError)?;
 
-        Ok((num, rest))
-    }
+    //     Ok((num, rest))
+    // }
 
     fn unpack_seed(input: &[u8]) -> Result<(Vec<u8>, &[u8]), ProgramError> {
         if input.len() < PUBKEY_BYTES {

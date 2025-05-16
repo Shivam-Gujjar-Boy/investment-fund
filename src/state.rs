@@ -3,11 +3,13 @@ use borsh::{BorshSerialize, BorshDeserialize};
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct FundAccount {
+    pub creator: Pubkey,
     pub members: Vec<Pubkey>,
     pub total_deposit: u64,
     pub governance_mint: Pubkey,
     pub vault: Pubkey,
     pub is_initialized: bool,
+    pub dex_program_ids: Vec<(u8, Pubkey)>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]

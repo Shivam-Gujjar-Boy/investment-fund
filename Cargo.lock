@@ -917,6 +917,7 @@ version = "0.1.0"
 dependencies = [
  "borsh 0.10.4",
  "borsh-derive 0.10.4",
+ "mpl-token-metadata",
  "solana-program",
  "spl-associated-token-account",
  "spl-token 3.5.0",
@@ -1089,6 +1090,19 @@ dependencies = [
  "keccak",
  "rand_core 0.6.4",
  "zeroize",
+]
+
+[[package]]
+name = "mpl-token-metadata"
+version = "3.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba8ee05284d79b367ae8966d558e1a305a781fc80c9df51f37775169117ba64f"
+dependencies = [
+ "borsh 0.10.4",
+ "num-derive 0.3.3",
+ "num-traits",
+ "solana-program",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,5 +1,6 @@
 use solana_program::pubkey::Pubkey;
 use borsh::{BorshSerialize, BorshDeserialize};
+use mpl_token_metadata::types::DataV2;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct FundAccount {
@@ -38,4 +39,14 @@ pub struct InvestmentProposalAccount {
 pub struct VoteAccount {
     pub voter: Pubkey,
     pub vote: u8,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub enum MetadataInstruction {
+    CreateMetadataAccountsV3 {
+        data: DataV2,
+        is_mutable: bool,
+        update_authority_is_signer: bool,
+        collection_details: Option<u8>
+    }
 }

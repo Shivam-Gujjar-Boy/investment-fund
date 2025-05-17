@@ -1,20 +1,18 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    clock::Clock,
-    entrypoint::ProgramResult,
-    msg,
-    program::{invoke, invoke_signed},
-    program_pack::Pack, pubkey::Pubkey,
-    system_instruction,
-    sysvar::{rent::Rent, Sysvar}
+    account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, instruction::AccountMeta, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey::Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar},
+    pubkey,
+    instruction::{Instruction},
 };
 use spl_token::state::Account as TokenAccount;
 use crate::{
     errors::FundError,
     instruction::FundInstruction,
-    state::{FundAccount, InvestmentProposalAccount, UserSpecificAccount, VoteAccount}
+    state::{FundAccount, InvestmentProposalAccount, UserSpecificAccount, VoteAccount, MetadataInstruction}
 };
+use mpl_token_metadata::types::DataV2;
+
+pub const TOKEN_METADATA_PROGRAM_ID: Pubkey = pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
 pub fn process_instruction(
     program_id: &Pubkey,
@@ -76,6 +74,8 @@ fn process_init_fund_account(
     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA Account
     let rent_account_info = next_account_info(accounts_iter)?; // Rent PDA Account
     let creator_wallet_info = next_account_info(accounts_iter)?; // Creator Wallet Address
+    let metadata_account_info = next_account_info(accounts_iter)?;
+    let rent_sysvar_info = next_account_info(accounts_iter)?;
 
     if !creator_wallet_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
@@ -94,14 +94,6 @@ fn process_init_fund_account(
     let mint_space = 82;
     let total_rent = rent.minimum_balance(fund_space) + rent.minimum_balance(vault_space) + rent.minimum_balance(mint_space);
     let fee_rent_total = total_rent + total_rent/10;
-    // let rent_per_member = total_rent / u64::from(number_of_members);
-
-    // for member in &members {
-    //     invoke(
-    //         &system_instruction::transfer(member.key, rent_account_info.key, rent_per_member),
-    //         &[(*member).clone(), fund_account_info.clone(), system_program_info.clone()],
-    //     )?;
-    // }
 
     invoke(
         &system_instruction::transfer(
@@ -156,6 +148,64 @@ fn process_init_fund_account(
             9,
         )?,
         &[governance_mint_info.clone(), token_program_info.clone()],
+    )?;
+
+    let (metadata_pda, _bump) = Pubkey::find_program_address(
+        &[
+            b"metadata",
+            TOKEN_METADATA_PROGRAM_ID.as_ref(),
+            governance_mint_info.key.as_ref(),
+        ],
+        program_id,
+    );
+
+    let name = String::from_utf8(fund_name.clone()).unwrap();
+    let symbol = String::from("TKN");
+    let uri = String::from(" ");
+
+    let ix_data = MetadataInstruction::CreateMetadataAccountsV3 {
+        data: DataV2 {
+            name,
+            symbol,
+            uri,
+            seller_fee_basis_points: 0,
+            creators: None,
+            collection: None,
+            uses: None,
+        },
+        is_mutable: false,
+        update_authority_is_signer: true,
+        collection_details: None,
+    }.try_to_vec().unwrap();
+
+    let accounts_for_mint = vec![
+        AccountMeta::new(metadata_pda, false),
+        AccountMeta::new(*governance_mint_info.key, false),
+        AccountMeta::new(*rent_account_info.key, true),
+        AccountMeta::new(*rent_account_info.key, true),
+        AccountMeta::new(*rent_account_info.key, true),
+        AccountMeta::new_readonly(*system_program_info.key, false),
+        AccountMeta::new_readonly(solana_program::sysvar::rent::ID, false),
+    ];
+
+    let ix = Instruction {
+        program_id: TOKEN_METADATA_PROGRAM_ID,
+        accounts: accounts_for_mint,
+        data: ix_data,
+    };
+
+    invoke_signed(
+        &ix,
+        &[
+            metadata_account_info.clone(),
+            governance_mint_info.clone(),
+            rent_account_info.clone(), // PDA signer
+            rent_account_info.clone(),
+            rent_account_info.clone(),
+            system_program_info.clone(),
+            rent_sysvar_info.clone(),
+        ],
+        &[&[b"rent", &[rent_bump]]]
     )?;
 
     let mut dex_program_ids: Vec<(u8, Pubkey)> = Vec::new();

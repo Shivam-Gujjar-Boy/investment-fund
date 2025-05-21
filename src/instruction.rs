@@ -18,8 +18,11 @@ pub enum FundInstruction {
     // 6. Rent Account
     // 7. [..] Array of Fund Members
     InitFundAccount { 
-        fund_name: Vec<u8>,
+        privacy: u8,
+        fund_name: String,
     },
+
+    InitUserAccount { },
 
     AddFundMember {
         fund_name: Vec<u8>,
@@ -36,6 +39,11 @@ pub enum FundInstruction {
     InitDepositSol {
         amount: u64,
         fund_name: Vec<u8>,
+    },
+
+    InitDepositToken {
+        amount: u64,
+        fund_name: String,
     },
 
     // Proposals can be of the following types:
@@ -67,9 +75,7 @@ pub enum FundInstruction {
         fund_name: Vec<u8>,
     },
 
-    InitRentAccount {
-
-    },
+    InitRentAccount { },
 
     // 1. Proposal Account
     // 2. Fund Account
@@ -82,15 +88,17 @@ pub enum FundInstruction {
 
 impl FundInstruction {
     pub fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
-        let (&tag, rest) = input
+        let (tag, rest) = input
             .split_first()
             .ok_or(FundError::InstructionUnpackError)?;
 
         Ok(match tag {
             0 => {
-                // let (num, rest) = Self::unpack_members(rest)?;
-                let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                let (privacy, rest) = Self::unpack_members(rest)?;
+                // let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::InitFundAccount {
+                    privacy,
                     fund_name,
                 }
             }
@@ -121,7 +129,7 @@ impl FundInstruction {
                 let (fund_name, _rest) = Self::unpack_seed(rest)?;
                 Self::Vote {
                     vote,
-                    fund_name
+                    fund_name,
                 }
             }
             4 => {
@@ -134,6 +142,17 @@ impl FundInstruction {
             6 => {
                 Self::InitRentAccount {  }
             }
+            7 => {
+                Self::InitUserAccount {  }
+            }
+            8 => {
+                let (amount, rest) = Self::unpack_amount(rest)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                Self::InitDepositToken {
+                    amount,
+                    fund_name,
+                }
+            }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());
             }
@@ -141,13 +160,13 @@ impl FundInstruction {
 
     }
 
-    // fn unpack_members(input: &[u8]) -> Result<(u8, &[u8]), ProgramError> {
-    //     let (&num, rest) = input
-    //         .split_first()
-    //         .ok_or(FundError::InstructionUnpackError)?;
+    fn unpack_members(input: &[u8]) -> Result<(u8, &[u8]), ProgramError> {
+        let (&num, rest) = input
+            .split_first()
+            .ok_or(FundError::InstructionUnpackError)?;
 
-    //     Ok((num, rest))
-    // }
+        Ok((num, rest))
+    }
 
     fn unpack_seed(input: &[u8]) -> Result<(Vec<u8>, &[u8]), ProgramError> {
         if input.len() < PUBKEY_BYTES {

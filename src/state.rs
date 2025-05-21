@@ -1,25 +1,41 @@
 use solana_program::pubkey::Pubkey;
 use borsh::{BorshSerialize, BorshDeserialize};
-use mpl_token_metadata::types::DataV2;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct FundAccount {
+    pub name: [u8; 32],
     pub creator: Pubkey,
-    pub members: Vec<Pubkey>,
+    pub members: u64,
     pub total_deposit: u64,
     pub governance_mint: Pubkey,
     pub vault: Pubkey,
     pub is_initialized: bool,
-    pub dex_program_ids: Vec<(u8, Pubkey)>,
+    pub created_at: i64,
+    pub is_private: u8,
+    // pub dex_program_ids: Vec<(u8, Pubkey)>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct VaultAccount {
+    pub fund: Pubkey,
+    pub last_deposit_time: i64,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct UserAccount {
+    pub user: Pubkey,
+    pub funds: Vec<Pubkey>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct UserSpecificAccount {
     pub pubkey: Pubkey,
+    pub fund: Pubkey,
     pub deposit: u64,
     pub governance_token_balance: u64,
     pub is_active: bool,
     pub num_proposals: u8,
+    pub join_time: i64,
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -39,14 +55,4 @@ pub struct InvestmentProposalAccount {
 pub struct VoteAccount {
     pub voter: Pubkey,
     pub vote: u8,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
-pub enum MetadataInstruction {
-    CreateMetadataAccountsV3 {
-        data: DataV2,
-        is_mutable: bool,
-        update_authority_is_signer: bool,
-        collection_details: Option<u8>
-    }
 }

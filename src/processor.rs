@@ -1,16 +1,18 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
-    account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, instruction::AccountMeta, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey::Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar},
+    account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey::Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar},
     pubkey,
-    instruction::{Instruction},
+    // instruction::{Instruction},
 };
 use spl_token::state::Account as TokenAccount;
+use spl_associated_token_account::instruction::create_associated_token_account;
 use crate::{
     errors::FundError,
     instruction::FundInstruction,
-    state::{FundAccount, InvestmentProposalAccount, UserSpecificAccount, VoteAccount, MetadataInstruction}
+    state::{FundAccount, InvestmentProposalAccount, UserAccount, UserSpecificAccount, VaultAccount, VoteAccount}
 };
 use mpl_token_metadata::types::DataV2;
+use mpl_token_metadata::instructions::{CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs};
 
 pub const TOKEN_METADATA_PROGRAM_ID: Pubkey = pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
@@ -22,9 +24,14 @@ pub fn process_instruction(
     let instruction = FundInstruction::unpack(data)?;
     match instruction {
 
-        FundInstruction::InitFundAccount { fund_name} => {
+        FundInstruction::InitFundAccount { privacy, fund_name} => {
             msg!("Instruction: Init Fund Account");
-            process_init_fund_account(program_id, accounts, fund_name)
+            process_init_fund_account(program_id, accounts, fund_name, privacy)
+        }
+
+        FundInstruction::InitUserAccount {  } => {
+            msg!("Instruction: Init User Account");
+            process_init_user_account(program_id, accounts)
         }
 
         FundInstruction::AddFundMember { fund_name } => {
@@ -35,6 +42,11 @@ pub fn process_instruction(
         FundInstruction::InitDepositSol { amount , fund_name} => {
             msg!("Instruction: Init Deposit");
             process_init_deposit_sol(program_id, accounts, amount, fund_name)
+        }
+
+        FundInstruction::InitDepositToken { amount, fund_name } => {
+            msg!("Instruction: Init Deposit Token");
+            process_init_deposit_token(program_id, accounts, amount, fund_name)
         }
 
         FundInstruction::InitProposalInvestment { 
@@ -64,169 +76,275 @@ pub fn process_instruction(
 fn process_init_fund_account(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    fund_name: Vec<u8>,
+    fund_name: String,
+    privacy: u8,
 ) -> ProgramResult {
+    let current_time = Clock::get()?.unix_timestamp;
+
     let accounts_iter = &mut accounts.iter();
     let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint
     let vault_account_info = next_account_info(accounts_iter)?; // Vault PDA Account
     let system_program_info = next_account_info(accounts_iter)?; // System Program
     let token_program_info = next_account_info(accounts_iter)?; // Token Program (2020)
     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA Account
-    let rent_account_info = next_account_info(accounts_iter)?; // Rent PDA Account
     let creator_wallet_info = next_account_info(accounts_iter)?; // Creator Wallet Address
-    let metadata_account_info = next_account_info(accounts_iter)?;
-    let rent_sysvar_info = next_account_info(accounts_iter)?;
+    let metadata_account_info = next_account_info(accounts_iter)?; // Metadat PDA for Governance Mint
+    let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar
+    let token_metadata_program_info = next_account_info(accounts_iter)?; // Token Metadata Program
+    let user_account_info = next_account_info(accounts_iter)?; // Global User Account
 
+    // Creator should be signer
     if !creator_wallet_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
-    let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
-    let (rent_pda, rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
-    if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *rent_account_info.key != rent_pda {
+    // Deriving required PDAs
+    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
+    let (governance_mint, governance_bump) = Pubkey::find_program_address(&[b"governance", fund_pda.as_ref()], program_id);
+    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", creator_wallet_info.key.as_ref()], program_id);
+
+    // Check if any of the provided PDA differes from the derived
+    if *fund_account_info.key != fund_pda ||
+       *vault_account_info.key != vault_pda ||
+       *governance_mint_info.key != governance_mint ||
+       *user_account_info.key != user_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
-    let rent = Rent::get()?;
-    let fund_space = 106 + 32 + 32;
-    let vault_space = 165;
-    let mint_space = 82;
-    let total_rent = rent.minimum_balance(fund_space) + rent.minimum_balance(vault_space) + rent.minimum_balance(mint_space);
-    let fee_rent_total = total_rent + total_rent/10;
+    // Check if the an account already exists on that PDA
+    if fund_account_info.lamports() > 0 {
+        return Err(FundError::InvalidAccountData.into());
+    }
 
-    invoke(
-        &system_instruction::transfer(
-            creator_wallet_info.key,
-            rent_account_info.key,
-            fee_rent_total
-        ),
-        &[creator_wallet_info.clone(), rent_account_info.clone(), system_program_info.clone()],
-    )?;
+    // Calculate Rent
+    let rent = &Rent::from_account_info(rent_sysvar_info)?;
+    let fund_space = 154 as usize;
+    let vault_space = 40 as usize;
+    let mint_space = spl_token::state::Mint::LEN;
 
+    // Creating the Fund Account PDA
     invoke_signed(
         &system_instruction::create_account(
-            rent_account_info.key,
+            creator_wallet_info.key,
             fund_account_info.key,
             rent.minimum_balance(fund_space),
             fund_space as u64,
             program_id
         ),
-        &[rent_account_info.clone(), fund_account_info.clone(), system_program_info.clone()],
-        &[&[b"rent", &[rent_bump]]],
+        &[creator_wallet_info.clone(), fund_account_info.clone(), system_program_info.clone()],
+        &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]]
     )?;
 
+    // Creating the Vault Account PDA
     invoke_signed(
         &system_instruction::create_account(
-            rent_account_info.key,
+            creator_wallet_info.key,
             vault_account_info.key,
             rent.minimum_balance(vault_space),
             vault_space as u64,
             token_program_info.key
         ),
-        &[rent_account_info.clone(), vault_account_info.clone(), system_program_info.clone()],
-        &[&[b"rent", &[rent_bump]]],
+        &[creator_wallet_info.clone(), vault_account_info.clone(), system_program_info.clone()],
+        &[&[b"vault", fund_pda.as_ref(), &[vault_bump]]],
     )?;
 
+    // Creating the Governance Mint account
     invoke_signed(
         &system_instruction::create_account(
-            rent_account_info.key,
+            creator_wallet_info.key,
             governance_mint_info.key,
             rent.minimum_balance(mint_space),
             mint_space as u64,
             token_program_info.key,
         ),
-        &[rent_account_info.clone(), governance_mint_info.clone(), system_program_info.clone()],
-        &[&[b"rent", &[rent_bump]]],
+        &[creator_wallet_info.clone(), governance_mint_info.clone(), system_program_info.clone()],
+        &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]],
     )?;
-    invoke(
+    invoke_signed(
         &spl_token::instruction::initialize_mint(
             token_program_info.key,
             governance_mint_info.key,
             fund_account_info.key,
             None,
-            9,
+            0,
         )?,
-        &[governance_mint_info.clone(), token_program_info.clone()],
+        &[governance_mint_info.clone(), token_program_info.clone(), rent_sysvar_info.clone()],
+        &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]],
     )?;
 
+    // Deriving PDA to store Mint metadata
     let (metadata_pda, _bump) = Pubkey::find_program_address(
         &[
             b"metadata",
             TOKEN_METADATA_PROGRAM_ID.as_ref(),
             governance_mint_info.key.as_ref(),
         ],
-        program_id,
+        &TOKEN_METADATA_PROGRAM_ID,
     );
 
-    let name = String::from_utf8(fund_name.clone()).unwrap();
-    let symbol = String::from("TKN");
-    let uri = String::from(" ");
+    // Token metadata
+    let token_name = fund_name.clone();
+    let token_symbol = String::from("GOV");
+    let token_uri = "".to_string();
 
-    let ix_data = MetadataInstruction::CreateMetadataAccountsV3 {
+    // Instruction to create Mtadata account at derived PDA
+    let create_metadata_ix = CreateMetadataAccountV3 {
+        metadata: metadata_pda,
+        mint: *governance_mint_info.key,
+        mint_authority: *fund_account_info.key,
+        payer: *creator_wallet_info.key,
+        update_authority: (*fund_account_info.key, true),
+        system_program: *system_program_info.key,
+        rent: None,
+    }.instruction(CreateMetadataAccountV3InstructionArgs {
         data: DataV2 {
-            name,
-            symbol,
-            uri,
+            name: token_name,
+            symbol: token_symbol,
+            uri: token_uri,
             seller_fee_basis_points: 0,
             creators: None,
             collection: None,
             uses: None,
         },
-        is_mutable: false,
-        update_authority_is_signer: true,
+        is_mutable: true,
         collection_details: None,
-    }.try_to_vec().unwrap();
+    });
 
-    let accounts_for_mint = vec![
-        AccountMeta::new(metadata_pda, false),
-        AccountMeta::new(*governance_mint_info.key, false),
-        AccountMeta::new(*rent_account_info.key, true),
-        AccountMeta::new(*rent_account_info.key, true),
-        AccountMeta::new(*rent_account_info.key, true),
-        AccountMeta::new_readonly(*system_program_info.key, false),
-        AccountMeta::new_readonly(solana_program::sysvar::rent::ID, false),
-    ];
-
-    let ix = Instruction {
-        program_id: TOKEN_METADATA_PROGRAM_ID,
-        accounts: accounts_for_mint,
-        data: ix_data,
-    };
-
+    // Invoking instruction to create Metadata PDA account
     invoke_signed(
-        &ix,
+        &create_metadata_ix,
         &[
             metadata_account_info.clone(),
             governance_mint_info.clone(),
-            rent_account_info.clone(), // PDA signer
-            rent_account_info.clone(),
-            rent_account_info.clone(),
+            fund_account_info.clone(),
+            fund_account_info.clone(),
+            creator_wallet_info.clone(),
             system_program_info.clone(),
             rent_sysvar_info.clone(),
+            token_metadata_program_info.clone(),
         ],
-        &[&[b"rent", &[rent_bump]]]
+        &[&[b"fund", fund_name.as_bytes(), creator_wallet_info.key.as_ref(), &[fund_bump]]]
     )?;
 
-    let mut dex_program_ids: Vec<(u8, Pubkey)> = Vec::new();
-    dex_program_ids.push((1, *fund_account_info.key));
+    // Converting the fund_name to an array of u8 of fixed size 32
+    let bytes = fund_name.as_bytes();
+    let mut array = [0u8; 32];
+    let len = bytes.len().min(32);
+    array[..len].copy_from_slice(&bytes[..len]);
 
-    let mut member_pubkeys: Vec<Pubkey> = Vec::new();
-    member_pubkeys.push(*creator_wallet_info.key);
-
+    // Deserialization and Serialization of Fund data
     let fund_data = FundAccount {
+        name: array,
         creator: *creator_wallet_info.key,
-        members: member_pubkeys,
-        total_deposit: 0,
+        members: 1 as u64,
+        total_deposit: 0 as u64,
         governance_mint: *governance_mint_info.key,
         vault: *vault_account_info.key,
         is_initialized: true,
-        dex_program_ids,
+        created_at: current_time,
+        is_private: privacy,
     };
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
+    // Deserializing the User Global PDA
+    let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
+
+    // Check is User is already in the Fund (vague since fund account is just created)
+    if user_data.funds.contains(fund_account_info.key) {
+        msg!("User is already a member");
+        return Ok(())
+    }
+
+    // Calculate current size and new size of User PDA
+    let current_size = user_account_info.data_len();
+    let new_size = current_size + 32;
+
+    // Calculate current min rent-exempt and new rent-exempt
+    let new_min_balance = rent.minimum_balance(new_size);
+    let current_balance = user_account_info.lamports();
+
+    // Deposit lamports if required
+    if new_min_balance > current_balance {
+        invoke(
+            &system_instruction::transfer(
+                creator_wallet_info.key,
+                user_account_info.key,
+                new_min_balance - current_balance,
+            ),
+            &[creator_wallet_info.clone(), user_account_info.clone(), system_program_info.clone()],
+        )?;
+    }
+
+    // Reallocation for new bytes
+    user_account_info.realloc(new_size, false)?;
+    // Add the new fund address to user funds
+    user_data.funds.push(*fund_account_info.key);
+    user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
+
+    // Deserialization and Serialization of Vault Account Data
+    let vault_data = VaultAccount {
+        fund: *fund_account_info.key,
+        last_deposit_time: 0,
+    };
+    vault_data.serialize(&mut &mut vault_account_info.data.borrow_mut()[..])?;
+
+    msg!("Fund Initialization successful");
+
     Ok(())
 
+
+}
+
+fn process_init_user_account(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo]
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let creator_account_info = next_account_info(accounts_iter)?; // User Wallet
+    let user_account_info = next_account_info(accounts_iter)?; // User PDA Account to be created
+    let system_program_info = next_account_info(accounts_iter)?; // System Program
+
+    // User should be the signer
+    if !creator_account_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    // Derive User PDA and check if provided is same as expected
+    let (user_pda, user_bump) = Pubkey::find_program_address(&[b"user", creator_account_info.key.as_ref()], program_id);
+    if *user_account_info.key != user_pda {
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    // Calculate rent-exempt
+    let rent = Rent::get()?;
+    let user_space = 32 + 4 as usize;
+    
+    // Create the User PDA Account which is it's global identity
+    invoke_signed(
+        &system_instruction::create_account(
+            creator_account_info.key,
+            user_account_info.key,
+            rent.minimum_balance(user_space),
+            user_space as u64,
+            program_id
+        ),
+        &[creator_account_info.clone(), user_account_info.clone(), system_program_info.clone()],
+        &[&[b"user", creator_account_info.key.as_ref(), &[user_bump]]]
+    )?;
+
+    // Initiallt user is joined in no Funds
+    let funds:Vec<Pubkey> = vec![];
+
+    // Deserialization and Serialization of User Account Data
+    let user_data = UserAccount {
+        user: *creator_account_info.key,
+        funds,
+    };
+    user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
+    msg!("User Account created successfully");
+
+    Ok(())
 
 }
 
@@ -236,30 +354,33 @@ fn process_add_member(
     fund_name: Vec<u8>,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
-    let fund_account_info = next_account_info(accounts_iter)?;
-    let member_account_info = next_account_info(accounts_iter)?;
-    let system_program_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?; // Fund Account
+    let member_account_info = next_account_info(accounts_iter)?; // USer to be added 
+    let system_program_info = next_account_info(accounts_iter)?; // System Program
+    let user_account_info = next_account_info(accounts_iter)?; // User Global identity account
 
+    // User should be signer
     if !member_account_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
-
-    if *fund_account_info.key != fund_pda {
+    // Derive PDAs and check if it is same as provided in accounts
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
+    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", member_account_info.key.as_ref()], program_id);
+    if *fund_account_info.key != fund_pda || *user_account_info.key != user_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
-    let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-
-    if fund_data.members.contains(member_account_info.key) {
+    // Deserialize User Data and check if User is already a member of provided Fund
+    let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
+    if user_data.funds.contains(fund_account_info.key) {
         msg!("User is already a member");
-        return Ok(())
+        return Ok(());
     }
 
-    let current_size = fund_account_info.data_len();
+    // Calculate if more lamports are needed for reallocation of User Global Account
+    let current_size = user_account_info.data_len();
     let new_size = current_size + 32;
-
     let rent = Rent::get()?;
     let new_min_balance = rent.minimum_balance(new_size);
     let current_balance = fund_account_info.lamports();
@@ -268,21 +389,19 @@ fn process_add_member(
         invoke(
             &system_instruction::transfer(
                 member_account_info.key,
-                fund_account_info.key,
+                user_account_info.key,
                 new_min_balance - current_balance,
             ),
-            &[member_account_info.clone(), fund_account_info.clone(), system_program_info.clone()],
+            &[member_account_info.clone(), user_account_info.clone(), system_program_info.clone()],
         )?;
     }
 
-    invoke_signed(
-        &system_instruction::allocate(fund_account_info.key, new_size as u64),
-        &[fund_account_info.clone(), system_program_info.clone()],
-        &[&[b"fund", &fund_name, &[fund_bump]]]
-    )?;
-    
-    fund_data.members.push(*member_account_info.key);
-    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+    // Reallocate new bytes ofr storage of new Fund addresss
+    user_account_info.realloc(new_size, false)?;
+    user_data.funds.push(*fund_account_info.key);
+    user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
+
+    // Add the logic to distribute rent the creator paid!
 
     Ok(())
 }
@@ -308,16 +427,11 @@ fn process_init_deposit_sol(
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
     let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
-    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
-    if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *user_specific_pda_info.key != user_pda {
+    let (user_specific_pda, _user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
+    if *fund_account_info.key != fund_pda || *vault_account_info.key != vault_pda || *user_specific_pda_info.key != user_specific_pda {
         return Err(FundError::InvalidAccountData.into());
-    }
-
-    if fund_data.governance_mint != *governance_mint_info.key {
-        return Err(FundError::InvalidGovernanceMint.into());
     }
 
     let expected_ata = spl_associated_token_account::get_associated_token_address(
@@ -376,23 +490,25 @@ fn process_init_deposit_sol(
     )?;
 
     let rent = Rent::get()?;
-    let user_space = 50;
+    let user_space = 90;
     let total_rent = rent.minimum_balance(user_space);
 
-    invoke(
-        &system_instruction::create_account(
-            member_account_info.key,
-            user_specific_pda_info.key,
-            total_rent,
-            user_space as u64,
-            program_id
-        ),
-        &[
-            member_account_info.clone(),
-            user_specific_pda_info.clone(),
-            system_program_info.clone(),
-        ],
-    )?;
+    if user_specific_pda_info.data_is_empty() {
+        invoke(
+            &system_instruction::create_account(
+                member_account_info.key,
+                user_specific_pda_info.key,
+                total_rent,
+                user_space as u64,
+                program_id
+            ),
+            &[
+                member_account_info.clone(),
+                user_specific_pda_info.clone(),
+                system_program_info.clone(),
+            ],
+        )?;
+    }
 
     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     fund_data.total_deposit += amount;
@@ -403,7 +519,132 @@ fn process_init_deposit_sol(
     user_specific_data.governance_token_balance += amount;
     user_specific_data.pubkey = *user_specific_pda_info.key;
     user_specific_data.is_active = true;
+    user_specific_data.fund = *fund_account_info.key;
+    user_specific_data.join_time = Clock::get()?.unix_timestamp;
     user_specific_data.serialize(&mut &mut user_specific_pda_info.data.borrow_mut()[..])?;
+
+    Ok(())
+}
+
+fn process_init_deposit_token(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amount: u64,
+    fund_name: String,
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let member_account_info = next_account_info(accounts_iter)?;
+    let member_ata_info = next_account_info(accounts_iter)?;
+    let vault_account_info = next_account_info(accounts_iter)?;
+    let vault_ata_info = next_account_info(accounts_iter)?;
+    let mint_account_info = next_account_info(accounts_iter)?;
+    let token_program_info = next_account_info(accounts_iter)?;
+    let ata_program_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?;
+    let user_specific_pda_info = next_account_info(accounts_iter)?;
+    let system_program_info = next_account_info(accounts_iter)?;
+    let rent_sysvar_info = next_account_info(accounts_iter)?;
+    let governance_token_account_info = next_account_info(accounts_iter)?;
+    let governance_mint_info = next_account_info(accounts_iter)?;
+
+    if !member_account_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_account_info.key.as_ref()], program_id);
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (user_specific_pda, _user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
+    if *vault_account_info.key != vault_pda || *fund_account_info.key != fund_pda || *user_specific_pda_info.key != user_specific_pda {
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let expected_ata = spl_associated_token_account::get_associated_token_address(
+        member_account_info.key,
+        governance_mint_info.key,
+    );
+    if *governance_token_account_info.key != expected_ata {
+        return Err(FundError::InvalidTokenAccount.into());
+    }
+
+    if governance_token_account_info.data_is_empty() {
+        invoke(
+            &spl_associated_token_account::instruction::create_associated_token_account(
+                member_account_info.key,
+                member_account_info.key,
+                governance_mint_info.key,
+                token_program_info.key,
+            ),
+            &[
+                member_account_info.clone(),
+                governance_token_account_info.clone(),
+                token_program_info.clone(),
+            ]
+        )?;
+    }
+
+    if vault_ata_info.data_is_empty() {
+        msg!("Creating Vault ATA...");
+
+        invoke_signed(
+            &create_associated_token_account(
+                &vault_pda,
+                member_account_info.key,
+                mint_account_info.key,
+                token_program_info.key
+            ),
+            &[
+                member_account_info.clone(),
+                vault_ata_info.clone(),
+                vault_account_info.clone(),
+                mint_account_info.clone(),
+                system_program_info.clone(),
+                token_program_info.clone(),
+                ata_program_info.clone(),
+                rent_sysvar_info.clone(),
+            ],
+            &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
+        )?;
+    }
+
+    msg!("Transferring tokens...");
+
+    invoke_signed(
+        &spl_token::instruction::transfer(
+            token_program_info.key,
+            member_ata_info.key,
+            vault_ata_info.key,
+            member_account_info.key,
+            &[],
+            amount,
+        )?,
+        &[
+            member_ata_info.clone(),
+            vault_ata_info.clone(),
+            member_account_info.clone(),
+            token_program_info.clone(),
+        ],
+        &[]
+    )?;
+
+    invoke_signed(
+        &spl_token::instruction::mint_to(
+            token_program_info.key,
+            governance_mint_info.key,
+            governance_token_account_info.key,
+            fund_account_info.key,
+            &[],
+            amount,
+        )?,
+        &[
+            governance_mint_info.clone(),
+            governance_token_account_info.clone(),
+            fund_account_info.clone(),
+            token_program_info.clone(),
+        ],
+        &[&[b"fund", &fund_name, &[fund_bump]]],
+    )?;
+
+
 
     Ok(())
 }
@@ -430,7 +671,15 @@ fn process_init_investment_proposal(
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), proposer_account_info.key.as_ref()], program_id);
     let mut user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
-    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", proposer_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
+    let (proposal_pda, proposal_bump) = Pubkey::find_program_address(
+        &[
+            b"proposal-investment",
+            proposer_account_info.key.as_ref(),
+            &[user_data.num_proposals],
+            fund_account_info.key.as_ref()
+        ],
+        program_id
+    );
     if *fund_account_info.key != fund_pda || *user_specific_pda_info.key != user_pda || *proposal_account_info.key != proposal_pda {
         return Err(FundError::InvalidAccountData.into());
     }
@@ -439,7 +688,7 @@ fn process_init_investment_proposal(
     let proposal_space = 43 + amounts.len()*73;
     let total_rent = rent.minimum_balance(proposal_space);
 
-    invoke(
+    invoke_signed(
         &system_instruction::create_account(
             proposer_account_info.key,
             proposal_account_info.key,
@@ -452,6 +701,13 @@ fn process_init_investment_proposal(
             proposer_account_info.clone(),
             system_program_info.clone(),
         ],
+        &[&[
+            b"proposal-investment",
+            proposer_account_info.key.as_ref(),
+            &[user_data.num_proposals],
+            fund_account_info.key.as_ref(),
+            &[proposal_bump]
+        ]]
     )?;
 
     let from_assets_info : Vec<&AccountInfo> = accounts_iter
@@ -490,7 +746,6 @@ fn process_init_investment_proposal(
     user_data.serialize(&mut &mut user_specific_pda_info.data.borrow_mut()[..])?;
 
     Ok(())
-
 }
 
 fn process_vote_on_proposal(
@@ -600,7 +855,7 @@ fn process_init_rent_account(
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
+    let (rent_pda, rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
     if *rent_account_info.key != rent_pda {
         return Err(FundError::InvalidAccountData.into());
@@ -610,7 +865,7 @@ fn process_init_rent_account(
     let data_len = 0 as usize;
     let rent_exemption_amount = rent.minimum_balance(data_len);
 
-    invoke(
+    invoke_signed(
         &system_instruction::create_account(
             god_father_info.key,
             rent_account_info.key,
@@ -619,6 +874,7 @@ fn process_init_rent_account(
             program_id
         ),
         &[god_father_info.clone(), rent_account_info.clone(), system_program_info.clone()],
+        &[&[b"rent", &[rent_bump]]]
     )?;
 
     Ok(())

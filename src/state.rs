@@ -40,11 +40,12 @@ pub struct UserSpecificAccount {
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct InvestmentProposalAccount {
+    pub fund: Pubkey,
     pub proposer: Pubkey,
     pub from_assets: Vec<Pubkey>,
     pub to_assets: Vec<Pubkey>,
     pub amounts: Vec<u64>,
-    pub dex_tags: Vec<u8>,
+    // pub dex_tags: Vec<u8>,
     pub votes_yes: u64,
     pub votes_no: u64,
     pub deadline: i64,

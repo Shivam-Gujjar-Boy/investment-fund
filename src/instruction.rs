@@ -25,7 +25,7 @@ pub enum FundInstruction {
     InitUserAccount { },
 
     AddFundMember {
-        fund_name: Vec<u8>,
+        fund_name: String,
     },
 
     // 1. Governance Mint Account
@@ -38,7 +38,7 @@ pub enum FundInstruction {
     // 8. User-specific PDA
     InitDepositSol {
         amount: u64,
-        fund_name: Vec<u8>,
+        fund_name: String,
     },
 
     InitDepositToken {
@@ -57,9 +57,9 @@ pub enum FundInstruction {
     // 3. [..] To Assets Mints
     InitProposalInvestment {
         amounts: Vec<u64>,
-        dex_tags: Vec<u8>,
+        // dex_tags: Vec<u8>,
         deadline: i64,
-        fund_name: Vec<u8>,
+        fund_name: String,
     },
 
     // 1. Voter Account
@@ -74,6 +74,8 @@ pub enum FundInstruction {
         vote: u8,
         fund_name: Vec<u8>,
     },
+
+    DeleteFund {},
 
     InitRentAccount { },
 
@@ -104,7 +106,7 @@ impl FundInstruction {
             }
             1 => {
                 let (amount, rest) = Self::unpack_amount(rest)?;
-                let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::InitDepositSol {
                     amount,
                     fund_name,
@@ -113,13 +115,13 @@ impl FundInstruction {
             2 => {
                 let (&num_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amounts, rest) = Self::unpack_amounts(rest, num_of_swaps)?;
-                let (dex_tags, rest) = Self::unpack_dex_tags(rest, num_of_swaps)?;
+                // let (dex_tags, rest) = Self::unpack_dex_tags(rest, num_of_swaps)?;
                 let (deadline, rest) = Self::unpack_deadline(rest)?;
-                let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::InitProposalInvestment {
                     amounts,
-                    dex_tags,
+                    // dex_tags,
                     deadline,
                     fund_name,
                 }
@@ -133,7 +135,7 @@ impl FundInstruction {
                 }
             }
             4 => {
-                let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::AddFundMember { fund_name }
             }
             5 => {
@@ -152,6 +154,9 @@ impl FundInstruction {
                     amount,
                     fund_name,
                 }
+            }
+            9 => {
+                Self::DeleteFund { }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

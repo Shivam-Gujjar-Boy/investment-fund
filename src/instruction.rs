@@ -86,6 +86,7 @@ pub enum FundInstruction {
     // 5. Token Program
     ExecuteProposalInvestment {},
     Execute { proposal: Pubkey },
+    LeaveFund{fund_name: String },
 }
 
 impl FundInstruction {
@@ -157,6 +158,11 @@ impl FundInstruction {
             }
             9 => {
                 Self::DeleteFund { }
+            }
+            10 => {
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+
+                Self::LeaveFund { fund_name }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

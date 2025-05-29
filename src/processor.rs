@@ -396,27 +396,27 @@ fn process_add_member(
     let new_size = current_size + 32;
     let rent = Rent::get()?;
     let new_min_balance = rent.minimum_balance(new_size);
-    let current_balance = fund_account_info.lamports();
+    let current_balance = user_account_info.lamports();
 
     if new_min_balance > current_balance {
         invoke(
             &system_instruction::transfer(
                 member_account_info.key,
                 user_account_info.key,
-                (new_min_balance - current_balance)*10,
+                (new_min_balance - current_balance),
             ),
             &[member_account_info.clone(), user_account_info.clone(), system_program_info.clone()],
         )?;
     }
 
-    invoke(
-        &system_instruction::transfer(
-            member_account_info.key,
-            user_account_info.key,
-            400_000_000,
-        ),
-        &[member_account_info.clone(), user_account_info.clone(), system_program_info.clone()]
-    )?;
+    // invoke(
+    //     &system_instruction::transfer(
+    //         member_account_info.key,
+    //         user_account_info.key,
+    //         400_000_000,
+    //     ),
+    //     &[member_account_info.clone(), user_account_info.clone(), system_program_info.clone()]
+    // )?;
 
     // Reallocate new bytes ofr storage of new Fund addresss
     user_account_info.realloc(new_size, false)?;

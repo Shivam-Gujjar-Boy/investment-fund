@@ -489,7 +489,6 @@ fn process_init_deposit_token(
     let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar Account
     let governance_token_account_info = next_account_info(accounts_iter)?; // Governance Token Account of depositor
     let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint Account
-    // let temp_wsol_account_info = next_account_info(accounts_iter)?;
 
     // Depositor should be signer
     if !member_account_info.is_signer {
@@ -661,6 +660,12 @@ fn process_init_deposit_token(
     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     fund_data.total_deposit += mint_amount;
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+
+    // Update User's deposit in user specific accoount
+    let mut user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
+    user_data.deposit += mint_amount;
+    user_data.governance_token_balance += mint_amount;
+    user_data.serialize(&mut &mut user_specific_pda_info.data.borrow_mut()[..])?;
 
     Ok(())
 }
@@ -1084,11 +1089,13 @@ fn create_user_specific_pda<'a>(
     )?;
 
     let mut user_data= UserSpecificAccount::try_from_slice(&user_specific_info.data.borrow())?;
-
-        user_data.fund = *fund_account_info.key;
-        user_data.is_active = true;
-        user_data.join_time = current_time;
-        user_data.pubkey = *member_wallet_info.key;
+    user_data.pubkey = *member_wallet_info.key;
+    user_data.fund = *fund_account_info.key;
+    user_data.deposit = 0;
+    user_data.governance_token_balance = 0;
+    user_data.is_active = true;
+    user_data.num_proposals = 0;
+    user_data.join_time = current_time;
 
     user_data.serialize(&mut &mut user_specific_info.data.borrow_mut()[..])?;
 

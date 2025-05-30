@@ -225,21 +225,21 @@ impl FundInstruction {
         Ok((amounts, input_slice))
     }
 
-    fn unpack_dex_tags(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u8>, &[u8]), ProgramError> {
-        if input.len() < num_of_swaps as usize {
-            return Err(FundError::InstructionUnpackError.into());
-        }
+    // fn unpack_dex_tags(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u8>, &[u8]), ProgramError> {
+    //     if input.len() < num_of_swaps as usize {
+    //         return Err(FundError::InstructionUnpackError.into());
+    //     }
 
-        let mut dex_tags: Vec<u8> = Vec::new();
-        let mut input_slice = input;
-        for _i in 0..num_of_swaps {
-            let (dex_tag, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;
-            dex_tags.push(*dex_tag);
-            input_slice = rest;
-        }
+    //     let mut dex_tags: Vec<u8> = Vec::new();
+    //     let mut input_slice = input;
+    //     for _i in 0..num_of_swaps {
+    //         let (dex_tag, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;
+    //         dex_tags.push(*dex_tag);
+    //         input_slice = rest;
+    //     }
 
-        Ok((dex_tags, input_slice))
-    }
+    //     Ok((dex_tags, input_slice))
+    // }
 
     fn unpack_deadline(input: &[u8]) -> Result<(i64, &[u8]), ProgramError> {
         if input.len() < BYTE_SIZE_8 {

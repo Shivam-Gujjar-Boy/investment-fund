@@ -574,6 +574,7 @@ fn process_init_deposit_token(
                 member_ata_info.clone(),
                 token_program_info.clone(),
                 system_program_info.clone(),
+                rent_sysvar_info.clone()
             ]
         )?;
 

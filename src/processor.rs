@@ -466,121 +466,6 @@ fn process_add_member<'a>(
 
 }
 
-// fn process_init_deposit_sol(
-//     program_id: &Pubkey,
-//     accounts: &[AccountInfo],
-//     amount: u64,
-//     fund_name: String,
-// ) -> ProgramResult {
-//     let current_time = Clock::get()?.unix_timestamp;
-
-//     let accounts_iter = &mut accounts.iter();
-//     let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint Account
-//     let vault_account_info = next_account_info(accounts_iter)?; // Vault PDA
-//     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA
-//     let system_program_info = next_account_info(accounts_iter)?; // System Program
-//     let token_program_info = next_account_info(accounts_iter)?; // Token Program
-//     let governance_token_account_info = next_account_info(accounts_iter)?; // Governance token Account of depositor
-//     let member_account_info = next_account_info(accounts_iter)?; // Depositor Wallet
-//     let user_specific_pda_info = next_account_info(accounts_iter)?; // Depositor's Fund Specific Account
-//     let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar Account
-//     let associated_token_program_info = next_account_info(accounts_iter)?;
-
-//     // Depositor needs to be signer
-//     if !member_account_info.is_signer {
-//         msg!("Required Signer not found");
-//         return Err(FundError::MissingRequiredSignature.into());
-//     }
-
-//     // Derive PDAs and check for equality with provided ones
-//     let (governance_mint, _governance_bump) = Pubkey::find_program_address(&[b"governance", fund_account_info.key.as_ref()], program_id);
-//     let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-//     let (vault_pda, _vault_bump) = Pubkey::find_program_address(&[b"vault", fund_account_info.key.as_ref()], program_id);
-//     let (user_specific_pda, user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_account_info.key.as_ref(), member_account_info.key.as_ref()], program_id);
-//     if *fund_account_info.key != fund_pda ||
-//        *vault_account_info.key != vault_pda ||
-//        *user_specific_pda_info.key != user_specific_pda ||
-//        *governance_mint_info.key != governance_mint {
-//         return Err(FundError::InvalidAccountData.into());
-//     }
-//     let expected_ata = spl_associated_token_account::get_associated_token_address(
-//         member_account_info.key,
-//         governance_mint_info.key,
-//     );
-//     if *governance_token_account_info.key != expected_ata {
-//         return Err(FundError::InvalidTokenAccount.into());
-//     }
-
-//     // If depositor's token account doesn't exist for governance mint, then create it
-//     if governance_token_account_info.data_is_empty() {
-//         invoke(
-//             &spl_associated_token_account::instruction::create_associated_token_account(
-//                 member_account_info.key,
-//                 member_account_info.key,
-//                 governance_mint_info.key,
-//                 token_program_info.key,
-//             ),
-//             &[
-//                 member_account_info.clone(),
-//                 governance_token_account_info.clone(),
-//                 member_account_info.clone(),
-//                 governance_mint_info.clone(),
-//                 token_program_info.clone(),
-//                 system_program_info.clone(),
-//                 associated_token_program_info.clone(),
-//                 rent_sysvar_info.clone(),
-//             ]
-//         )?;
-//     }
-
-//     // Deposit required SOL from depositor to vault account
-//     invoke(
-//         &system_instruction::transfer(
-//             member_account_info.key,
-//             vault_account_info.key,
-//             amount,
-//         ),
-//         &[
-//             member_account_info.clone(),
-//             vault_account_info.clone(),
-//             system_program_info.clone(),
-//         ]
-//     )?;
-
-//     // Now mint equal amount of governance tokens to depositor's governance token account
-//     invoke_signed(
-//         &spl_token::instruction::mint_to(
-//             token_program_info.key,
-//             governance_mint_info.key,
-//             governance_token_account_info.key,
-//             fund_account_info.key,
-//             &[],
-//             amount,
-//         )?,
-//         &[
-//             governance_mint_info.clone(),
-//             governance_token_account_info.clone(),
-//             fund_account_info.clone(),
-//             token_program_info.clone(),
-//             // rent_sysvar_info.clone(),
-//         ],
-//         &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
-//     )?;
-
-//     // In vault account, set the last deposit time
-//     let mut vault_data = VaultAccount::try_from_slice(&vault_account_info.data.borrow())?;
-//     vault_data.last_deposit_time = current_time;
-//     vault_data.serialize(&mut &mut vault_account_info.data.borrow_mut()[..])?;
-
-
-//     // In fund account increase the deposited amount (unit lamports)
-//     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-//     fund_data.total_deposit += amount;
-//     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
-
-//     Ok(())
-// }
-
 fn process_init_deposit_token(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -645,7 +530,7 @@ fn process_init_deposit_token(
         )?;
     }
 
-    let rent =Rent::get()?;
+    let rent = &Rent::from_account_info(rent_sysvar_info)?;
     let rent_req = rent.minimum_balance(TokenAccount::LEN);
 
     // If vault's token account account for the depositing mint doesn't exist, create it

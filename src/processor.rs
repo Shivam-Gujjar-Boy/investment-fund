@@ -654,8 +654,8 @@ fn process_init_deposit_token(
 
         invoke_signed(
             &create_associated_token_account(
-                &vault_pda,
                 member_account_info.key,
+                vault_account_info.key,
                 mint_account_info.key,
                 token_program_info.key
             ),

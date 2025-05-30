@@ -106,15 +106,15 @@ impl FundInstruction {
                     fund_name,
                 }
             }
+            // 1 => {
+            //     let (amount, rest) = Self::unpack_amount(rest)?;
+            //     let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+            //     Self::InitDepositSol {
+            //         amount,
+            //         fund_name,
+            //     }
+            // } 
             1 => {
-                let (amount, rest) = Self::unpack_amount(rest)?;
-                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
-                Self::InitDepositSol {
-                    amount,
-                    fund_name,
-                }
-            } 
-            2 => {
                 let (&num_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amounts, rest) = Self::unpack_amounts(rest, num_of_swaps)?;
                 // let (dex_tags, rest) = Self::unpack_dex_tags(rest, num_of_swaps)?;
@@ -128,7 +128,7 @@ impl FundInstruction {
                     fund_name,
                 }
             }
-            3 => {
+            2 => {
                 let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (fund_name, _rest) = Self::unpack_seed(rest)?;
                 Self::Vote {
@@ -136,20 +136,20 @@ impl FundInstruction {
                     fund_name,
                 }
             }
-            4 => {
+            3 => {
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::AddFundMember { fund_name }
             }
-            5 => {
+            4 => {
                 Self::ExecuteProposalInvestment {}
             }
-            6 => {
+            5 => {
                 Self::InitRentAccount {  }
             }
-            7 => {
+            6 => {
                 Self::InitUserAccount {  }
             }
-            8 => {
+            7 => {
                 let (amount, rest) = Self::unpack_amount(rest)?;
                 let (mint_amount, rest) = Self::unpack_amount(rest)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
@@ -159,10 +159,10 @@ impl FundInstruction {
                     fund_name,
                 }
             }
-            9 => {
+            8 => {
                 Self::DeleteFund { }
             }
-            10 => {
+            9 => {
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::LeaveFund { fund_name }

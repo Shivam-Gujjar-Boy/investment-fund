@@ -44,9 +44,9 @@ pub fn process_instruction<'a>(
         //     process_init_deposit_sol(program_id, accounts, amount, fund_name)
         // }
 
-        FundInstruction::InitDepositToken { amount, fund_name } => {
+        FundInstruction::InitDepositToken { amount, mint_amount, fund_name } => {
             msg!("Instruction: Init Deposit Token");
-            process_init_deposit_token(program_id, accounts, amount, fund_name)
+            process_init_deposit_token(program_id, accounts, amount, mint_amount, fund_name)
         }
 
         FundInstruction::InitProposalInvestment { 
@@ -585,6 +585,7 @@ fn process_init_deposit_token(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     amount: u64,
+    mint_amount: u64,
     fund_name: String,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
@@ -753,7 +754,7 @@ fn process_init_deposit_token(
             governance_token_account_info.key,
             fund_account_info.key,
             &[],
-            amount,
+            mint_amount,
         )?,
         &[
             governance_mint_info.clone(),
@@ -771,7 +772,7 @@ fn process_init_deposit_token(
 
     // In fund account increase the deposited amount (unit lamports)
     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    fund_data.total_deposit += amount;
+    fund_data.total_deposit += mint_amount;
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
     Ok(())

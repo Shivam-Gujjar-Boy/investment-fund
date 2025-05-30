@@ -36,13 +36,14 @@ pub enum FundInstruction {
     // 6. Member's Governance Token Account
     // 7. Member's Wallet
     // 8. User-specific PDA
-    InitDepositSol {
-        amount: u64,
-        fund_name: String,
-    },
+    // InitDepositSol {
+    //     amount: u64,
+    //     fund_name: String,
+    // },
 
     InitDepositToken {
         amount: u64,
+        mint_amount: u64,
         fund_name: String,
     },
 
@@ -150,9 +151,11 @@ impl FundInstruction {
             }
             8 => {
                 let (amount, rest) = Self::unpack_amount(rest)?;
+                let (mint_amount, rest) = Self::unpack_amount(rest)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::InitDepositToken {
                     amount,
+                    mint_amount,
                     fund_name,
                 }
             }

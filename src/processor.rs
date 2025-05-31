@@ -471,7 +471,7 @@ fn process_add_member<'a>(
         )?;
     }
 
-    // Reallocate new bytes ofr storage of new member pubkey
+    // Reallocate new bytes for storage of new member pubkey
     fund_account_info.realloc(fund_new_size, false)?;
     fund_data.members.push(*member_account_info.key);
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
@@ -490,15 +490,6 @@ fn process_add_member<'a>(
     //     )?;
     // }
 
-    // fund_data.members += 1;
-
-    // create_user_specific_pda(
-    //     program_id,
-    //     member_account_info,
-    //     system_program_info,
-    //     fund_account_info,
-    //     user_specific_info
-    // )
     Ok(())
 
 }
@@ -522,7 +513,6 @@ fn process_init_deposit_token(
     let ata_program_info = next_account_info(accounts_iter)?; // Associated Token Program
     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA
     let user_account_info = next_account_info(accounts_iter)?;
-    // let user_specific_pda_info = next_account_info(accounts_iter)?; // USER Specific PDA
     let system_program_info = next_account_info(accounts_iter)?; // System program
     let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar Account
     let governance_token_account_info = next_account_info(accounts_iter)?; // Governance Token Account of depositor
@@ -537,7 +527,6 @@ fn process_init_deposit_token(
     let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_account_info.key.as_ref()], program_id);
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", member_account_info.key.as_ref()], program_id);
     let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-    // let (user_specific_pda, _user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
     if *vault_account_info.key != vault_pda || *fund_account_info.key != fund_pda || *user_account_info.key != user_pda {
         return Err(FundError::InvalidAccountData.into());
     }
@@ -655,6 +644,21 @@ fn process_init_deposit_token(
                 member_account_info.clone(),
             ]
         )?;
+
+        invoke(
+            &spl_token::instruction::close_account(
+                token_program_info.key,
+                member_ata_info.key,
+                member_account_info.key,
+                member_account_info.key,
+                &[]
+            )?,
+            &[
+                token_program_info.clone(),
+                member_account_info.clone(),
+                member_ata_info.clone()
+               ]
+        )?;
     } else {
         msg!("Transferring tokens...");
         // Now transfer the required number of tokens from depositor's token account to vault's token account
@@ -738,7 +742,6 @@ fn process_init_investment_proposal(
     let accounts_iter = &mut accounts.iter();
     let proposer_account_info = next_account_info(accounts_iter)?; // Proposer Wallet
     let user_account_info = next_account_info(accounts_iter)?; // Proposer's Global Account
-    // let user_specific_pda_info = next_account_info(accounts_iter)?; // Proposer's Fund-specific Account
     let fund_account_info = next_account_info(accounts_iter)?; // Fund Account
     let proposal_account_info = next_account_info(accounts_iter)?; // Proposal Account
     let system_program_info = next_account_info(accounts_iter)?; // System Program
@@ -751,7 +754,6 @@ fn process_init_investment_proposal(
     // Derive PDAs and check for equality with the provided ones
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", proposal_account_info.key.as_ref()], program_id);
-    // let (user_specific_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), proposer_account_info.key.as_ref()], program_id);
     let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
 
     let user_specific = user_data

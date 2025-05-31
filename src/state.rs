@@ -35,17 +35,6 @@ pub struct UserSpecific {
     pub join_time: i64
 }
 
-// #[derive(BorshSerialize, BorshDeserialize)]
-// pub struct UserSpecificAccount {
-//     pub pubkey: Pubkey,
-//     pub fund: Pubkey,
-//     pub deposit: u64,
-//     pub governance_token_balance: u64,
-//     pub is_active: bool,
-//     pub num_proposals: u8,
-//     pub join_time: i64,
-// }
-
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct InvestmentProposalAccount {
     pub fund: Pubkey,

@@ -36,10 +36,6 @@ pub enum FundInstruction {
     // 6. Member's Governance Token Account
     // 7. Member's Wallet
     // 8. User-specific PDA
-    // InitDepositSol {
-    //     amount: u64,
-    //     fund_name: String,
-    // },
 
     InitDepositToken {
         amount: u64,
@@ -58,6 +54,7 @@ pub enum FundInstruction {
     // 3. [..] To Assets Mints
     InitProposalInvestment {
         amounts: Vec<u64>,
+        slippage: Vec<u16>,
         // dex_tags: Vec<u8>,
         deadline: i64,
         fund_name: String,
@@ -106,23 +103,17 @@ impl FundInstruction {
                     fund_name,
                 }
             }
-            // 1 => {
-            //     let (amount, rest) = Self::unpack_amount(rest)?;
-            //     let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
-            //     Self::InitDepositSol {
-            //         amount,
-            //         fund_name,
-            //     }
-            // } 
             1 => {
                 let (&num_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amounts, rest) = Self::unpack_amounts(rest, num_of_swaps)?;
+                let (slippage, rest) = Self::unpack_slippage(rest, num_of_swaps)?;
                 // let (dex_tags, rest) = Self::unpack_dex_tags(rest, num_of_swaps)?;
                 let (deadline, rest) = Self::unpack_deadline(rest)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::InitProposalInvestment {
                     amounts,
+                    slippage,
                     // dex_tags,
                     deadline,
                     fund_name,
@@ -223,6 +214,33 @@ impl FundInstruction {
         }
 
         Ok((amounts, input_slice))
+    }
+
+    fn unpack_slippage(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u16>, &[u8]), ProgramError> {
+        if input.len() < 2*(num_of_swaps as usize) {
+            return Err(FundError::InstructionUnpackError.into());
+        }
+
+        let mut slippages: Vec<u16> = Vec::new();
+        let mut input_slice = input;
+        for _i in 0..num_of_swaps {
+            let (slippage, rest) = Self::unpack_two_bytes(input_slice)?;
+            slippages.push(slippage);
+            input_slice = rest;
+        }
+
+        Ok((slippages, input_slice))
+    }
+
+    fn unpack_two_bytes(input: &[u8]) -> Result<(u16, &[u8]), ProgramError> {
+        if input.len() < (2 as usize) {
+            return Err(FundError::InstructionUnpackError.into());
+        }
+
+        let (slippage_bytes, rest) = input.split_at(2 as usize);
+        let slippage = u16::from_le_bytes(slippage_bytes.try_into().expect("Invalid amount length"));
+
+        Ok((slippage, rest))
     }
 
     // fn unpack_dex_tags(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u8>, &[u8]), ProgramError> {

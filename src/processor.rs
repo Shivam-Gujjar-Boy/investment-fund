@@ -6,10 +6,11 @@ use solana_program::{
 };
 use spl_token::state::Account as TokenAccount;
 use spl_associated_token_account::instruction::create_associated_token_account;
+use crate::state::UserSpecific;
 use crate::{
     errors::FundError,
     instruction::FundInstruction,
-    state::{FundAccount, InvestmentProposalAccount, UserAccount, UserSpecificAccount, VaultAccount, VoteAccount}
+    state::{FundAccount, InvestmentProposalAccount, UserAccount, VaultAccount, VoteAccount}
 };
 use mpl_token_metadata::types::DataV2;
 use mpl_token_metadata::instructions::{CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs};
@@ -51,12 +52,13 @@ pub fn process_instruction<'a>(
 
         FundInstruction::InitProposalInvestment { 
             amounts,
+            slippage,
             // dex_tags,
             deadline,
             fund_name,
         } => {
             msg!("Instruction: Init Proposal");
-            process_init_investment_proposal(program_id, accounts, amounts, deadline, fund_name)
+            process_init_investment_proposal(program_id, accounts, amounts, slippage, deadline, fund_name)
         }
 
         FundInstruction::Vote {vote, fund_name} => {
@@ -70,8 +72,9 @@ pub fn process_instruction<'a>(
         }
 
         FundInstruction::LeaveFund { fund_name } => {
-            msg!("Instruction: Leave Fund");
-            process_leave_fund(program_id, fund_name, accounts)
+            msg!("Instruction: Leave Fund {}", fund_name);
+            Ok(())
+            // process_leave_fund(program_id, fund_name, accounts)
         }
         // FundInstruction::DeleteFund {  } => {
         //     msg!("Instruction: Delete Fund");
@@ -101,7 +104,7 @@ fn process_init_fund_account<'a>(
     let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar
     let token_metadata_program_info = next_account_info(accounts_iter)?; // Token Metadata Program
     let user_account_info = next_account_info(accounts_iter)?; // Global User Account
-    let user_specific_info = next_account_info(accounts_iter)?;
+    // let user_specific_info = next_account_info(accounts_iter)?;
 
     // Creator should be signer
     if !creator_wallet_info.is_signer {
@@ -124,12 +127,13 @@ fn process_init_fund_account<'a>(
 
     // Check if the an account already exists on that PDA
     if fund_account_info.lamports() > 0 {
+        msg!("Fund already exists!!");
         return Err(FundError::InvalidAccountData.into());
     }
 
     // Calculate Rent
     let rent = &Rent::from_account_info(rent_sysvar_info)?;
-    let fund_space = 154 as usize;
+    let fund_space = 150 as usize;
     let vault_space = 40 as usize;
     let mint_space = spl_token::state::Mint::LEN;
 
@@ -243,11 +247,13 @@ fn process_init_fund_account<'a>(
     let len = bytes.len().min(32);
     array[..len].copy_from_slice(&bytes[..len]);
 
+    let members: Vec<Pubkey> = vec![*creator_wallet_info.key];
+
     // Deserialization and Serialization of Fund data
     let fund_data = FundAccount {
         name: array,
-        creator: *creator_wallet_info.key,
-        members: 1 as u64,
+        // creator: *creator_wallet_info.key,
+        members,
         total_deposit: 0 as u64,
         governance_mint: *governance_mint_info.key,
         vault: *vault_account_info.key,
@@ -261,14 +267,14 @@ fn process_init_fund_account<'a>(
     let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
 
     // Check is User is already in the Fund (vague since fund account is just created)
-    if user_data.funds.contains(fund_account_info.key) {
-        msg!("User is already a member");
-        return Ok(())
-    }
+    // if user_data.funds.contains(fund_account_info.key) {
+    //     msg!("User is already a member");
+    //     return Ok(())
+    // }
 
     // Calculate current size and new size of User PDA
     let current_size = user_account_info.data_len();
-    let new_size = current_size + 32;
+    let new_size = current_size + 50;
 
     // Calculate current min rent-exempt and new rent-exempt
     let new_min_balance = rent.minimum_balance(new_size);
@@ -288,8 +294,13 @@ fn process_init_fund_account<'a>(
 
     // Reallocation for new bytes
     user_account_info.realloc(new_size, false)?;
-    // Add the new fund address to user funds
-    user_data.funds.push(*fund_account_info.key);
+    // Add the new fund details to user funds
+    user_data.funds.push(UserSpecific {
+        fund: *fund_account_info.key,
+        governance_token_balance: 0 as u64,
+        num_proposals: 0 as u16,
+        join_time: current_time
+    });
     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
 
     // Deserialization and Serialization of Vault Account Data
@@ -301,13 +312,15 @@ fn process_init_fund_account<'a>(
 
     msg!("Fund Initialization successful");
 
-    create_user_specific_pda(
-        program_id,
-        creator_wallet_info,
-        system_program_info,
-        fund_account_info,
-        user_specific_info
-    )
+    // create_user_specific_pda(
+    //     program_id,
+    //     creator_wallet_info,
+    //     system_program_info,
+    //     fund_account_info,
+    //     user_specific_info
+    // )
+
+    Ok(())
 }
 
 fn process_init_user_account(
@@ -353,8 +366,8 @@ fn process_init_user_account(
         &[&[b"user", creator_account_info.key.as_ref(), &[user_bump]]]
     )?;
 
-    // Initiallt user is joined in no Funds
-    let funds:Vec<Pubkey> = vec![];
+    // Initially user is joined in no Funds
+    let funds:Vec<UserSpecific> = vec![];
 
     // Deserialization and Serialization of User Account Data
     let user_data = UserAccount {
@@ -373,12 +386,14 @@ fn process_add_member<'a>(
     accounts: &'a [AccountInfo<'a>],
     fund_name: String,
 ) -> ProgramResult {
+    let current_time = Clock::get()?.unix_timestamp;
+
     let accounts_iter = &mut accounts.iter();
     let fund_account_info = next_account_info(accounts_iter)?; // Fund Account
     let member_account_info = next_account_info(accounts_iter)?; // USer to be added 
     let system_program_info = next_account_info(accounts_iter)?; // System Program
     let user_account_info = next_account_info(accounts_iter)?; // User Global identity account
-    let user_specific_info = next_account_info(accounts_iter)?; // User Specific pda
+    // let user_specific_info = next_account_info(accounts_iter)?; // User Specific pda
 
     // User should be signer
     if !member_account_info.is_signer {
@@ -399,70 +414,92 @@ fn process_add_member<'a>(
 
     // Deserialize User Data and check if User is already a member of provided Fund
     let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
-    if user_data.funds.contains(fund_account_info.key) {
+    if user_data.funds.iter().any(|entry| entry.fund == *fund_account_info.key) {
         msg!("User is already a member");
         return Ok(());
     }
 
     // Calculate if more lamports are needed for reallocation of User Global Account
-    let current_size = user_account_info.data_len();
-    let new_size = current_size + 32;
+    let user_current_size = user_account_info.data_len();
+    let user_new_size = user_current_size + 50;
     let rent = Rent::get()?;
-    let new_min_balance = rent.minimum_balance(new_size);
-    let current_balance = user_account_info.lamports();
-    if new_min_balance > current_balance {
+    let user_new_min_balance = rent.minimum_balance(user_new_size);
+    let user_current_balance = user_account_info.lamports();
+    if user_new_min_balance > user_current_balance {
         invoke(
             &system_instruction::transfer(
                 member_account_info.key,
                 user_account_info.key,
-                new_min_balance - current_balance,
+                user_new_min_balance - user_current_balance,
             ),
             &[member_account_info.clone(), user_account_info.clone(), system_program_info.clone()],
         )?;
     }
 
-    // invoke(
-    //     &system_instruction::transfer(
-    //         member_account_info.key,
-    //         user_account_info.key,
-    //         400_000_000,
-    //     ),
-    //     &[member_account_info.clone(), user_account_info.clone(), system_program_info.clone()]
-    // )?;
-
-    // Reallocate new bytes ofr storage of new Fund addresss
-    user_account_info.realloc(new_size, false)?;
-    user_data.funds.push(*fund_account_info.key);
+    // Reallocate new bytes ofr storage of new Fund details
+    user_account_info.realloc(user_new_size, false)?;
+    user_data.funds.push(UserSpecific {
+        fund: *fund_account_info.key,
+        governance_token_balance: 0 as u64,
+        num_proposals: 0 as u16,
+        join_time: current_time
+    });
     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
 
     // Deserialize the fund data
     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    let n = fund_data.members;
-    let refund = (4593600 as u64)/(n*(n+1));
-    // Refund to existing members to equally distribute the rent fee
-    for _i in 0..n {
-        let receiver_account_info = next_account_info(accounts_iter)?;
+    // Check if user already exists
+    if fund_data.members.contains(member_account_info.key) {
+        msg!("User is already in the fund!");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    // Calculate if more lamports are needed for reallocation of Fund Account
+    let fund_current_size = fund_account_info.data_len();
+    let fund_new_size = fund_current_size + 32;
+    let fund_new_min_balance = rent.minimum_balance(fund_new_size);
+    let fund_current_balance = fund_account_info.lamports();
+
+    if fund_new_min_balance > fund_current_balance {
         invoke(
             &system_instruction::transfer(
                 member_account_info.key,
-                receiver_account_info.key,
-                refund,
+                fund_account_info.key,
+                fund_new_min_balance - fund_current_balance
             ),
-            &[member_account_info.clone(), receiver_account_info.clone(), system_program_info.clone()],
+            &[member_account_info.clone(), fund_account_info.clone(), system_program_info.clone()]
         )?;
     }
 
-    fund_data.members += 1;
+    // Reallocate new bytes ofr storage of new member pubkey
+    fund_account_info.realloc(fund_new_size, false)?;
+    fund_data.members.push(*member_account_info.key);
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+    // let n = fund_data.members;
+    // let refund = (4593600 as u64)/(n*(n+1));
+    // // Refund to existing members to equally distribute the rent fee
+    // for _i in 0..n {
+    //     let receiver_account_info = next_account_info(accounts_iter)?;
+    //     invoke(
+    //         &system_instruction::transfer(
+    //             member_account_info.key,
+    //             receiver_account_info.key,
+    //             refund,
+    //         ),
+    //         &[member_account_info.clone(), receiver_account_info.clone(), system_program_info.clone()],
+    //     )?;
+    // }
 
-    create_user_specific_pda(
-        program_id,
-        member_account_info,
-        system_program_info,
-        fund_account_info,
-        user_specific_info
-    )
-    // Ok(())
+    // fund_data.members += 1;
+
+    // create_user_specific_pda(
+    //     program_id,
+    //     member_account_info,
+    //     system_program_info,
+    //     fund_account_info,
+    //     user_specific_info
+    // )
+    Ok(())
 
 }
 
@@ -484,7 +521,8 @@ fn process_init_deposit_token(
     let token_program_info = next_account_info(accounts_iter)?; // Token Progarm
     let ata_program_info = next_account_info(accounts_iter)?; // Associated Token Program
     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA
-    let user_specific_pda_info = next_account_info(accounts_iter)?; // USER Specific PDA
+    let user_account_info = next_account_info(accounts_iter)?;
+    // let user_specific_pda_info = next_account_info(accounts_iter)?; // USER Specific PDA
     let system_program_info = next_account_info(accounts_iter)?; // System program
     let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar Account
     let governance_token_account_info = next_account_info(accounts_iter)?; // Governance Token Account of depositor
@@ -497,9 +535,10 @@ fn process_init_deposit_token(
 
     // Derive the PDAs and check for equality with provided ones
     let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_account_info.key.as_ref()], program_id);
+    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", member_account_info.key.as_ref()], program_id);
     let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-    let (user_specific_pda, _user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
-    if *vault_account_info.key != vault_pda || *fund_account_info.key != fund_pda || *user_specific_pda_info.key != user_specific_pda {
+    // let (user_specific_pda, _user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_account_info.key.as_ref()], program_id);
+    if *vault_account_info.key != vault_pda || *fund_account_info.key != fund_pda || *user_account_info.key != user_pda {
         return Err(FundError::InvalidAccountData.into());
     }
     let expected_ata = spl_associated_token_account::get_associated_token_address(
@@ -508,6 +547,13 @@ fn process_init_deposit_token(
     );
     if *governance_token_account_info.key != expected_ata {
         return Err(FundError::InvalidTokenAccount.into());
+    }
+
+    // If user doesn't exist in the fund, it can't deposit
+    let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
+    if !user_data.funds.iter().any(|entry| entry.fund == *fund_account_info.key) {
+        msg!("User is not a member of the fund");
+        return Err(FundError::InvalidAccountData.into());
     }
 
     // If depositor's governance token account doesn't exist, create one
@@ -662,10 +708,20 @@ fn process_init_deposit_token(
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
     // Update User's deposit in user specific accoount
-    let mut user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
-    user_data.deposit += mint_amount;
-    user_data.governance_token_balance += mint_amount;
-    user_data.serialize(&mut &mut user_specific_pda_info.data.borrow_mut()[..])?;
+    // let mut user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
+    // user_data.deposit += mint_amount;
+    // user_data.governance_token_balance += mint_amount;
+    // user_data.serialize(&mut &mut user_specific_pda_info.data.borrow_mut()[..])?;
+
+    if let Some(entry) = user_data.funds.iter_mut().find(|entry| entry.fund == *fund_account_info.key) {
+        entry.governance_token_balance += mint_amount;
+    } else {
+        msg!("Fund entry not found for user");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
+
 
     Ok(())
 }
@@ -674,13 +730,15 @@ fn process_init_investment_proposal(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     amounts: Vec<u64>,
+    slippage: Vec<u16>,
     // dex_tags: Vec<u8>,
     deadline: i64,
     fund_name: String,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
     let proposer_account_info = next_account_info(accounts_iter)?; // Proposer Wallet
-    let user_specific_pda_info = next_account_info(accounts_iter)?; // Proposer's Fund-specific Account
+    let user_account_info = next_account_info(accounts_iter)?; // Proposer's Global Account
+    // let user_specific_pda_info = next_account_info(accounts_iter)?; // Proposer's Fund-specific Account
     let fund_account_info = next_account_info(accounts_iter)?; // Fund Account
     let proposal_account_info = next_account_info(accounts_iter)?; // Proposal Account
     let system_program_info = next_account_info(accounts_iter)?; // System Program
@@ -692,24 +750,33 @@ fn process_init_investment_proposal(
 
     // Derive PDAs and check for equality with the provided ones
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), proposer_account_info.key.as_ref()], program_id);
-    let mut user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
+    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", proposal_account_info.key.as_ref()], program_id);
+    // let (user_specific_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), proposer_account_info.key.as_ref()], program_id);
+    let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
+
+    let user_specific = user_data
+        .funds
+        .iter()
+        .find(|entry| entry.fund == *fund_account_info.key)
+        .ok_or(FundError::InvalidAccountData)?;
+
     let (proposal_pda, proposal_bump) = Pubkey::find_program_address(
         &[
             b"proposal-investment",
             proposer_account_info.key.as_ref(),
-            &[user_data.num_proposals],
+            &user_specific.num_proposals.to_le_bytes(),
             fund_account_info.key.as_ref()
         ],
         program_id
     );
-    if *fund_account_info.key != fund_pda || *user_specific_pda_info.key != user_pda || *proposal_account_info.key != proposal_pda {
+
+    if *fund_account_info.key != fund_pda || *proposal_account_info.key != proposal_pda || *user_account_info.key != user_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
     // Rent Calculation
     let rent = Rent::get()?;
-    let proposal_space = 43 + 32 + 4 + amounts.len()*73;
+    let proposal_space = 89 + amounts.len()*74;
     let total_rent = rent.minimum_balance(proposal_space);
 
     // Create Proposal Account
@@ -729,7 +796,7 @@ fn process_init_investment_proposal(
         &[&[
             b"proposal-investment",
             proposer_account_info.key.as_ref(),
-            &[user_data.num_proposals],
+            &user_specific.num_proposals.to_le_bytes(),
             fund_account_info.key.as_ref(),
             &[proposal_bump]
         ]]
@@ -760,6 +827,7 @@ fn process_init_investment_proposal(
         from_assets: from_assets_mints,
         to_assets: to_assets_mints,
         amounts,
+        slippage,
         // dex_tags,
         deadline,
         votes_yes: 0,
@@ -767,8 +835,20 @@ fn process_init_investment_proposal(
         executed: false
     };
     proposal_data.serialize(&mut &mut proposal_account_info.data.borrow_mut()[..])?;
-    user_data.num_proposals += 1;
-    user_data.serialize(&mut &mut user_specific_pda_info.data.borrow_mut()[..])?;
+    // user_data.num_proposals += 1;
+    // user_data.serialize(&mut &mut user_specific_pda_info.data.borrow_mut()[..])?;
+
+    if let Some(user_specific) = user_data
+        .funds
+        .iter_mut()
+        .find(|entry| entry.fund == *fund_account_info.key) {
+            user_specific.num_proposals += 1;
+        } else {
+            msg!("User is not a member in this fund");
+            return Err(FundError::InvalidAccountData.into());
+        }
+
+    user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
 
     Ok(())
 }
@@ -782,31 +862,51 @@ fn process_vote_on_proposal(
     let current_time = Clock::get()?.unix_timestamp;
 
     let accounts_iter = &mut accounts.iter();
-    let voter_account_info = next_account_info(accounts_iter)?;
-    let vote_account_info = next_account_info(accounts_iter)?;
-    let proposal_account_info = next_account_info(accounts_iter)?;
-    let system_program_info = next_account_info(accounts_iter)?;
-    let user_specific_pda_info = next_account_info(accounts_iter)?;
-    let fund_account_info = next_account_info(accounts_iter)?;
-    let governance_token_mint_info = next_account_info(accounts_iter)?;
-    let voter_token_account_info = next_account_info(accounts_iter)?;
+    let voter_account_info = next_account_info(accounts_iter)?; // Voter's Wallet
+    let vote_account_info = next_account_info(accounts_iter)?; // Voter's vote account to be created
+    let proposer_account_info = next_account_info(accounts_iter)?; // Proposal creator wallet
+    let proposal_account_info = next_account_info(accounts_iter)?; // Proposal account
+    let system_program_info = next_account_info(accounts_iter)?; // System Program
+    let user_account_info = next_account_info(accounts_iter)?; // Proposer's global account
+    // let user_specific_pda_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?; // fund Account
+    let governance_token_mint_info = next_account_info(accounts_iter)?; // Governance Mint account
+    let voter_token_account_info = next_account_info(accounts_iter)?; // Voter's governance token account
 
+    // Voter needs to be signer
     if !voter_account_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
     }
 
+    // Pdas derivation
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", &fund_name], program_id);
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), voter_account_info.key.as_ref()], program_id);
-    let user_data = UserSpecificAccount::try_from_slice(&user_specific_pda_info.data.borrow())?;
-    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", voter_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
+    let user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
+
+    let user_specific = user_data
+        .funds
+        .iter()
+        .find(|entry| entry.fund == *fund_account_info.key)
+        .ok_or(FundError::InvalidAccountData)?;
+
+    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(
+        &[
+            b"proposal-investment",
+            proposer_account_info.key.as_ref(),
+            &user_specific.num_proposals.to_le_bytes(),
+            fund_account_info.key.as_ref()
+        ],
+        program_id
+    );
     let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"vote", voter_account_info.key.as_ref(), proposal_pda.as_ref()], program_id);
     let token_account = spl_associated_token_account::get_associated_token_address(
         voter_account_info.key,
         governance_token_mint_info.key
     );
 
+    // Pdas verification
     if *fund_account_info.key != fund_pda ||
-        *user_specific_pda_info.key != user_pda ||
+        *user_account_info.key != user_pda ||
         *proposal_account_info.key != proposal_pda ||
         *vote_account_info.key != vote_pda ||
         token_account != *voter_token_account_info.key {
@@ -911,94 +1011,94 @@ fn process_init_rent_account(
 //    change member array size in fund pda
 //    change User account pda's size
 
-fn process_leave_fund(
-    program_id: &Pubkey,
-    fund_name: String,
-    accounts: &[AccountInfo],
+// fn process_leave_fund(
+//     program_id: &Pubkey,
+//     fund_name: String,
+//     accounts: &[AccountInfo],
     
-) -> ProgramResult {
+// ) -> ProgramResult {
 
-    // let current_time = Clock::get()?.unix_timestamp;
+//     // let current_time = Clock::get()?.unix_timestamp;
 
-    let accounts_iter = &mut accounts.iter();
-    let member_wallet_info =next_account_info(accounts_iter)?;
-    let user_specific_info = next_account_info(accounts_iter)?; // to be deleted
-    let fund_account_info= next_account_info(accounts_iter)?;  // to change number of members
-    let user_account_info=next_account_info(accounts_iter)?;   // to change fund details
-    // let system_program_info = next_account_info(accounts_iter)?;  // to delete fund specific account
-    // let voter_account_info = next_account_info(accounts_iter)?;
-    // let proposal_account_info = next_account_info(accounts_iter)?;
+//     let accounts_iter = &mut accounts.iter();
+//     let member_wallet_info =next_account_info(accounts_iter)?;
+//     // let user_specific_info = next_account_info(accounts_iter)?; // to be deleted
+//     let fund_account_info= next_account_info(accounts_iter)?;  // to change number of members
+//     let user_account_info=next_account_info(accounts_iter)?;   // to change fund details
+//     // let system_program_info = next_account_info(accounts_iter)?;  // to delete fund specific account
+//     // let voter_account_info = next_account_info(accounts_iter)?;
+//     // let proposal_account_info = next_account_info(accounts_iter)?;
 
-    if !member_wallet_info.is_signer {
-        return Err(FundError::InvalidAccountData.into());
-    }
-
-
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-    let (user_specific_pda, _user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_wallet_info.key.as_ref()], program_id);
-    let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", member_wallet_info.key.as_ref()], program_id);
-    let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
-    let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    // let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", user_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
-    // let proposal_data = InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
-    if *fund_account_info.key != fund_pda ||
-    *user_specific_info.key != user_specific_pda ||
-    *user_account_info.key != user_pda {
-        return Err(FundError::InvalidAccountData.into());
-    }
+//     if !member_wallet_info.is_signer {
+//         return Err(FundError::InvalidAccountData.into());
+//     }
 
 
+//     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+//     // let (user_specific_pda, _user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_pda.as_ref(), member_wallet_info.key.as_ref()], program_id);
+//     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", member_wallet_info.key.as_ref()], program_id);
+//     let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
+//     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+//     // let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-investment", user_account_info.key.as_ref(), &[user_data.num_proposals]], program_id);
+//     // let proposal_data = InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
+//     if *fund_account_info.key != fund_pda ||
+//     // *user_specific_info.key != user_specific_pda ||
+//     *user_account_info.key != user_pda {
+//         return Err(FundError::InvalidAccountData.into());
+//     }
 
-    if !user_specific_info.data_is_empty(){
-        let lamports = **user_specific_info.try_borrow_lamports()?;
-        **member_wallet_info.try_borrow_mut_lamports()? += lamports;
-        **user_specific_info.try_borrow_mut_lamports()? = 0;
+
+
+//     // if !user_specific_info.data_is_empty(){
+//     //     let lamports = **user_specific_info.try_borrow_lamports()?;
+//     //     **member_wallet_info.try_borrow_mut_lamports()? += lamports;
+//     //     **user_specific_info.try_borrow_mut_lamports()? = 0;
     
-        // let mut data = user_specific_info.try_borrow_mut_data()?;
-        // for byte in data.iter_mut() {
-        //     *byte = 0;
-        // }
+//     //     // let mut data = user_specific_info.try_borrow_mut_data()?;
+//     //     // for byte in data.iter_mut() {
+//     //     //     *byte = 0;
+//     //     // }
     
-        msg!("User-specific fund account closed and lamports sent to user");
+//     //     msg!("User-specific fund account closed and lamports sent to user");
         
-    }
+//     // }
     
-    let current_rent = user_account_info.lamports();
+//     let current_rent = user_account_info.lamports();
 
-    let mut flag = false;
+//     let mut flag = false;
 
-    user_data.funds.retain(|key| {
-        let keep = key != fund_account_info.key;
-        if !keep {
-            flag = true;
-        }
-        keep
-    });
+//     user_data.funds.retain(|key| {
+//         let keep = key != fund_account_info.key;
+//         if !keep {
+//             flag = true;
+//         }
+//         keep
+//     });
 
-    if flag {
+//     if flag {
 
-        fund_data.members-=1;
+//         fund_data.members-=1;
 
-        let rent = Rent::get()?;
+//         let rent = Rent::get()?;
 
-        let current_size = user_account_info.data_len();
-        let new_size= current_size-32;
-        let new_rent = rent.minimum_balance(new_size);
+//         let current_size = user_account_info.data_len();
+//         let new_size= current_size-32;
+//         let new_rent = rent.minimum_balance(new_size);
     
-        if new_rent < current_rent {
-            // let lamports = **user_account_info.try_borrow_lamports()?;
-            **user_account_info.try_borrow_mut_lamports()? -= current_rent-new_rent;
-            **member_wallet_info.try_borrow_mut_lamports()? += current_rent-new_rent;
-        }
+//         if new_rent < current_rent {
+//             // let lamports = **user_account_info.try_borrow_lamports()?;
+//             **user_account_info.try_borrow_mut_lamports()? -= current_rent-new_rent;
+//             **member_wallet_info.try_borrow_mut_lamports()? += current_rent-new_rent;
+//         }
 
-        user_account_info.realloc(new_size, false)?;
-    }
+//         user_account_info.realloc(new_size, false)?;
+//     }
 
-    user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
-    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+//     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
+//     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 
 // fn process_delete_fund(
@@ -1052,52 +1152,52 @@ fn process_leave_fund(
 }
 */
 
-fn create_user_specific_pda<'a>(
-    program_id: &Pubkey,
-    member_wallet_info: &'a AccountInfo<'a>,
-    system_program_info: &'a AccountInfo<'a>,
-    fund_account_info: &'a AccountInfo<'a>,
-    user_specific_info: &'a AccountInfo<'a>
-) -> ProgramResult {
+// fn create_user_specific_pda<'a>(
+//     program_id: &Pubkey,
+//     member_wallet_info: &'a AccountInfo<'a>,
+//     system_program_info: &'a AccountInfo<'a>,
+//     fund_account_info: &'a AccountInfo<'a>,
+//     user_specific_info: &'a AccountInfo<'a>
+// ) -> ProgramResult {
 
-    let current_time = Clock::get()?.unix_timestamp;
+//     let current_time = Clock::get()?.unix_timestamp;
 
-    let (user_specific_pda, user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_account_info.key.as_ref(), member_wallet_info.key.as_ref()], program_id);
+//     let (user_specific_pda, user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_account_info.key.as_ref(), member_wallet_info.key.as_ref()], program_id);
 
-    if *user_specific_info.key != user_specific_pda {
-        return Err(FundError::InvalidAccountData.into());
-    }
+//     if *user_specific_info.key != user_specific_pda {
+//         return Err(FundError::InvalidAccountData.into());
+//     }
 
-    if !user_specific_info.data_is_empty() {
-        msg!("User already exists");
-        return Ok(());
-    }
+//     if !user_specific_info.data_is_empty() {
+//         msg!("User already exists");
+//         return Ok(());
+//     }
 
-    let rent = Rent::get()?;
-    let size = 90 as usize;
+//     let rent = Rent::get()?;
+//     let size = 90 as usize;
 
-    invoke_signed(
-        &system_instruction::create_account(
-            member_wallet_info.key,
-            user_specific_info.key,
-            rent.minimum_balance(size),
-            size as u64,
-            program_id
-        ),
-        &[member_wallet_info.clone(),user_specific_info.clone(),system_program_info.clone()],
-        &[&[b"user", fund_account_info.key.as_ref(), member_wallet_info.key.as_ref(),&[user_specific_bump]]]
-    )?;
+//     invoke_signed(
+//         &system_instruction::create_account(
+//             member_wallet_info.key,
+//             user_specific_info.key,
+//             rent.minimum_balance(size),
+//             size as u64,
+//             program_id
+//         ),
+//         &[member_wallet_info.clone(),user_specific_info.clone(),system_program_info.clone()],
+//         &[&[b"user", fund_account_info.key.as_ref(), member_wallet_info.key.as_ref(),&[user_specific_bump]]]
+//     )?;
 
-    let mut user_data= UserSpecificAccount::try_from_slice(&user_specific_info.data.borrow())?;
-    user_data.pubkey = *member_wallet_info.key;
-    user_data.fund = *fund_account_info.key;
-    user_data.deposit = 0;
-    user_data.governance_token_balance = 0;
-    user_data.is_active = true;
-    user_data.num_proposals = 0;
-    user_data.join_time = current_time;
+//     let mut user_data= UserSpecificAccount::try_from_slice(&user_specific_info.data.borrow())?;
+//     user_data.pubkey = *member_wallet_info.key;
+//     user_data.fund = *fund_account_info.key;
+//     user_data.deposit = 0;
+//     user_data.governance_token_balance = 0;
+//     user_data.is_active = true;
+//     user_data.num_proposals = 0;
+//     user_data.join_time = current_time;
 
-    user_data.serialize(&mut &mut user_specific_info.data.borrow_mut()[..])?;
+//     user_data.serialize(&mut &mut user_specific_info.data.borrow_mut()[..])?;
 
-    Ok(())
-}
+//     Ok(())
+// }

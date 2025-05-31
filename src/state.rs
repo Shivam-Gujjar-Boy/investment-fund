@@ -4,8 +4,8 @@ use borsh::{BorshSerialize, BorshDeserialize};
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct FundAccount {
     pub name: [u8; 32],
-    pub creator: Pubkey,
-    pub members: u64,
+    // pub creator: Pubkey,
+    pub members: Vec<Pubkey>,
     pub total_deposit: u64,
     pub governance_mint: Pubkey,
     pub vault: Pubkey,
@@ -24,19 +24,27 @@ pub struct VaultAccount {
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct UserAccount {
     pub user: Pubkey,
-    pub funds: Vec<Pubkey>,
+    pub funds: Vec<UserSpecific>,
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
-pub struct UserSpecificAccount {
-    pub pubkey: Pubkey,
+#[derive(BorshSerialize, BorshDeserialize, PartialEq)]
+pub struct UserSpecific {
     pub fund: Pubkey,
-    pub deposit: u64,
     pub governance_token_balance: u64,
-    pub is_active: bool,
-    pub num_proposals: u8,
-    pub join_time: i64,
+    pub num_proposals: u16,
+    pub join_time: i64
 }
+
+// #[derive(BorshSerialize, BorshDeserialize)]
+// pub struct UserSpecificAccount {
+//     pub pubkey: Pubkey,
+//     pub fund: Pubkey,
+//     pub deposit: u64,
+//     pub governance_token_balance: u64,
+//     pub is_active: bool,
+//     pub num_proposals: u8,
+//     pub join_time: i64,
+// }
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct InvestmentProposalAccount {
@@ -45,6 +53,7 @@ pub struct InvestmentProposalAccount {
     pub from_assets: Vec<Pubkey>,
     pub to_assets: Vec<Pubkey>,
     pub amounts: Vec<u64>,
+    pub slippage: Vec<u16>,
     // pub dex_tags: Vec<u8>,
     pub votes_yes: u64,
     pub votes_no: u64,

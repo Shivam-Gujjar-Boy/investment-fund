@@ -40,11 +40,6 @@ pub fn process_instruction<'a>(
             process_add_member(program_id, accounts, fund_name)
         }
 
-        // FundInstruction::InitDepositSol { amount , fund_name} => {
-        //     msg!("Instruction: Init Deposit");
-        //     process_init_deposit_sol(program_id, accounts, amount, fund_name)
-        // }
-
         FundInstruction::InitDepositToken { amount, mint_amount, fund_name } => {
             msg!("Instruction: Init Deposit Token");
             process_init_deposit_token(program_id, accounts, amount, mint_amount, fund_name)
@@ -252,14 +247,13 @@ fn process_init_fund_account<'a>(
     // Deserialization and Serialization of Fund data
     let fund_data = FundAccount {
         name: array,
-        // creator: *creator_wallet_info.key,
-        members,
         total_deposit: 0 as u64,
         governance_mint: *governance_mint_info.key,
         vault: *vault_account_info.key,
         is_initialized: true,
         created_at: current_time,
         is_private: privacy,
+        members,
     };
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
@@ -311,14 +305,6 @@ fn process_init_fund_account<'a>(
     vault_data.serialize(&mut &mut vault_account_info.data.borrow_mut()[..])?;
 
     msg!("Fund Initialization successful");
-
-    // create_user_specific_pda(
-    //     program_id,
-    //     creator_wallet_info,
-    //     system_program_info,
-    //     fund_account_info,
-    //     user_specific_info
-    // )
 
     Ok(())
 }

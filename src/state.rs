@@ -45,6 +45,7 @@ pub struct InvestmentProposalAccount {
     // pub dex_tags: Vec<u8>,
     pub votes_yes: u64,
     pub votes_no: u64,
+    pub creation_time: i64,
     pub deadline: i64,
     pub executed: bool,
 }

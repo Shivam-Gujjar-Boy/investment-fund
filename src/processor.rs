@@ -1,4 +1,7 @@
+use std::vec;
+
 use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::instruction::{Instruction, AccountMeta};
 use solana_program:: pubkey;
 use solana_program::{
     account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey:: Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar}
@@ -70,6 +73,11 @@ pub fn process_instruction<'a>(
             msg!("Instruction: Leave Fund {}", fund_name);
             Ok(())
             // process_leave_fund(program_id, fund_name, accounts)
+        }
+
+        FundInstruction::ExecuteProposalInvestment { swap_number } => {
+            msg!("Instruction: Execute Proposal");
+            process_execute_proposal(program_id, accounts, swap_number)
         }
         // FundInstruction::DeleteFund {  } => {
         //     msg!("Instruction: Delete Fund");
@@ -725,6 +733,7 @@ fn process_init_investment_proposal(
     deadline: i64,
     fund_name: String,
 ) -> ProgramResult {
+    let creation_time = Clock::get()?.unix_timestamp;
     let accounts_iter = &mut accounts.iter();
     let proposer_account_info = next_account_info(accounts_iter)?; // Proposer Wallet
     let user_account_info = next_account_info(accounts_iter)?; // Proposer's Global Account
@@ -817,9 +826,10 @@ fn process_init_investment_proposal(
         amounts,
         slippage,
         // dex_tags,
-        deadline,
         votes_yes: 0,
         votes_no: 0,
+        creation_time,
+        deadline,
         executed: false
     };
     proposal_data.serialize(&mut &mut proposal_account_info.data.borrow_mut()[..])?;
@@ -856,7 +866,6 @@ fn process_vote_on_proposal(
     let proposal_account_info = next_account_info(accounts_iter)?; // Proposal account
     let system_program_info = next_account_info(accounts_iter)?; // System Program
     let user_account_info = next_account_info(accounts_iter)?; // Proposer's global account
-    // let user_specific_pda_info = next_account_info(accounts_iter)?;
     let fund_account_info = next_account_info(accounts_iter)?; // fund Account
     let governance_token_mint_info = next_account_info(accounts_iter)?; // Governance Mint account
     let voter_token_account_info = next_account_info(accounts_iter)?; // Voter's governance token account
@@ -1124,68 +1133,94 @@ fn process_init_rent_account(
 //     Ok(())
 // }
 
-/* fn process_execute_proposal(
+
+fn process_execute_proposal(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    fund_name: Vec<u8>,
+    swap_number: u8,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
-    let accounts_iter = &mut accounts.iter();
-    let proposal_account_info = next_account_info(accounts_iter)?;
-    let fund_account_info = next_account_info(accounts_iter)?;
-    let vault_account_info = next_account_info(accounts_iter)?;
-    let system_program_info = next_account_info(accounts_iter)?;
-    let token_program_info = next_account_info(accounts_iter)?;
+    let account_iter = &mut accounts.iter();
+    let payer_info = next_account_info(account_iter)?;
+    let rent_account_info = next_account_info(account_iter)?;
+    let fund_account_info = next_account_info(account_iter)?;
+    let vault_account_info = next_account_info(account_iter)?;
+    let proposal_account_info = next_account_info(account_iter)?;
+    let token_program_2022_info = next_account_info(account_iter)?;
+    let token_program_std_info = next_account_info(account_iter)?;
+    let raydium_clmm_program = next_account_info(account_iter)?;
+    let amm_config = next_account_info(account_iter)?;
+    let pool_state = next_account_info(account_iter)?;
+    let input_token_account = next_account_info(account_iter)?;
+    let output_token_account = next_account_info(account_iter)?;
+    let input_vault_ata = next_account_info(account_iter)?;
+    let output_vault_ata = next_account_info(account_iter)?;
+    let observation_state = next_account_info(account_iter)?;
+    let memo_program = next_account_info(account_iter)?;
+
+    let proposal_data= InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
+    let is_executed = proposal_data.executed;
+
+    
+    if is_executed {
+        msg!("Proposal already executed");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let deadline = proposal_data.deadline;
+
+    if current_time <= deadline {
+        msg!("The proposal is still under voting.");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let vote_yes = proposal_data.votes_yes;
+    let vote_no = proposal_data.votes_no;
+
+    let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+    let strength = fund_data.total_deposit;
+
+    if (vote_yes + vote_no) < strength*(3/10) {
+        msg!("Quorum not reached");
+        return Err(FundError::InvalidInstruction.into());
+    }
+
+    if vote_yes <= vote_no {
+        msg!("Not enough votes favouring the trades");
+        return Err(FundError::InvalidInstruction.into());
+    }
+
+    let input_token_mint = proposal_data.from_assets[swap_number as usize];
+    let output_token_mint = proposal_data.to_assets[swap_number as usize];
+    let amount = proposal_data.amounts[swap_number as usize];
+    let slippage = proposal_data.slippage[swap_number as usize];
+
+    let accounts_needed: Vec<AccountMeta> = vec![
+        AccountMeta::new(payer_info.key.clone(), true),
+        AccountMeta::new_readonly(amm_config.key.clone(), false),
+        AccountMeta::new(pool_state.key.clone(), false),
+        AccountMeta::new(input_token_account.key.clone(), false),
+        AccountMeta::new(output_token_account.key.clone(), false),
+        AccountMeta::new(input_vault_ata.key.clone(), false),
+        AccountMeta::new(output_vault_ata.key.clone(), false),
+        AccountMeta::new(observation_state.key.clone(), false),
+        AccountMeta::new_readonly(token_program_std_info.key.clone(), false),
+        AccountMeta::new_readonly(token_program_2022_info.key.clone(), false),
+        AccountMeta::new_readonly(memo_program.key.clone(), false),
+        AccountMeta::new(input_token_mint.clone(), false),
+        AccountMeta::new(output_token_mint.clone(), false),
+    ];
+
+    let accounts_size = accounts.len();
+
+    for acc in account_iter {
+        accounts_needed.push(AccountMeta::new(acc.key.clone(), false));
+    }
+
+    let swap_cpi_instruction = Instruction {
+        program_id: *raydium_clmm_program.key,
+        accounts: accounts_needed,
+    };
+    Ok(())
 }
-*/
-
-// fn create_user_specific_pda<'a>(
-//     program_id: &Pubkey,
-//     member_wallet_info: &'a AccountInfo<'a>,
-//     system_program_info: &'a AccountInfo<'a>,
-//     fund_account_info: &'a AccountInfo<'a>,
-//     user_specific_info: &'a AccountInfo<'a>
-// ) -> ProgramResult {
-
-//     let current_time = Clock::get()?.unix_timestamp;
-
-//     let (user_specific_pda, user_specific_bump) = Pubkey::find_program_address(&[b"user", fund_account_info.key.as_ref(), member_wallet_info.key.as_ref()], program_id);
-
-//     if *user_specific_info.key != user_specific_pda {
-//         return Err(FundError::InvalidAccountData.into());
-//     }
-
-//     if !user_specific_info.data_is_empty() {
-//         msg!("User already exists");
-//         return Ok(());
-//     }
-
-//     let rent = Rent::get()?;
-//     let size = 90 as usize;
-
-//     invoke_signed(
-//         &system_instruction::create_account(
-//             member_wallet_info.key,
-//             user_specific_info.key,
-//             rent.minimum_balance(size),
-//             size as u64,
-//             program_id
-//         ),
-//         &[member_wallet_info.clone(),user_specific_info.clone(),system_program_info.clone()],
-//         &[&[b"user", fund_account_info.key.as_ref(), member_wallet_info.key.as_ref(),&[user_specific_bump]]]
-//     )?;
-
-//     let mut user_data= UserSpecificAccount::try_from_slice(&user_specific_info.data.borrow())?;
-//     user_data.pubkey = *member_wallet_info.key;
-//     user_data.fund = *fund_account_info.key;
-//     user_data.deposit = 0;
-//     user_data.governance_token_balance = 0;
-//     user_data.is_active = true;
-//     user_data.num_proposals = 0;
-//     user_data.join_time = current_time;
-
-//     user_data.serialize(&mut &mut user_specific_info.data.borrow_mut()[..])?;
-
-//     Ok(())
-// }

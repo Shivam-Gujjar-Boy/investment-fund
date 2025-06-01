@@ -82,7 +82,9 @@ pub enum FundInstruction {
     // 3. Vault Account
     // 4. System Program
     // 5. Token Program
-    ExecuteProposalInvestment {},
+    ExecuteProposalInvestment {
+        swap_number: u8,
+    },
     Execute { proposal: Pubkey },
     LeaveFund{fund_name: String },
 }
@@ -132,7 +134,11 @@ impl FundInstruction {
                 Self::AddFundMember { fund_name }
             }
             4 => {
-                Self::ExecuteProposalInvestment {}
+                let (&swap_number, _rest) = rest
+                    .split_first()
+                    .ok_or(FundError::InstructionUnpackError)?;
+
+                Self::ExecuteProposalInvestment { swap_number }
             }
             5 => {
                 Self::InitRentAccount {  }

@@ -55,3 +55,11 @@ pub struct VoteAccount {
     pub voter: Pubkey,
     pub vote: u8,
 }
+
+#[derive(BorshSerialize)]
+pub struct SwapV2Args {
+    pub amount: u64,
+    pub other_amount_threshold: u64,
+    pub sqrt_price_limit_x64: u128,
+    pub is_base_input: bool
+}

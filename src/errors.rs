@@ -11,6 +11,12 @@ pub enum FundError {
     InvalidTokenAccount,
     InvalidInstruction,
     NotEnoughFunds,
+    InvalidFundDetails,
+    InvalidMints,
+    InvalidRentAccount,
+    InvaildVaultAccount,
+    InvalidProposerInfo,
+    InvalidProposalAccount,
 }
 
 impl From<FundError> for ProgramError {

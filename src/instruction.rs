@@ -84,6 +84,7 @@ pub enum FundInstruction {
     // 5. Token Program
     ExecuteProposalInvestment {
         swap_number: u8,
+        fund_name: String,
     },
     Execute { proposal: Pubkey },
     LeaveFund{fund_name: String },
@@ -137,8 +138,12 @@ impl FundInstruction {
                 let (&swap_number, _rest) = rest
                     .split_first()
                     .ok_or(FundError::InstructionUnpackError)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
-                Self::ExecuteProposalInvestment { swap_number }
+                Self::ExecuteProposalInvestment {
+                    swap_number,
+                    fund_name
+                }
             }
             5 => {
                 Self::InitRentAccount {  }

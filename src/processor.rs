@@ -1,5 +1,4 @@
 use std::vec;
-
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::instruction::{Instruction, AccountMeta};
 use solana_program:: pubkey;
@@ -13,7 +12,7 @@ use crate::state::UserSpecific;
 use crate::{
     errors::FundError,
     instruction::FundInstruction,
-    state::{FundAccount, InvestmentProposalAccount, UserAccount, VaultAccount, VoteAccount}
+    state::{FundAccount, InvestmentProposalAccount, UserAccount, VaultAccount, VoteAccount, SwapV2Args}
 };
 use mpl_token_metadata::types::DataV2;
 use mpl_token_metadata::instructions::{CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs};
@@ -75,9 +74,9 @@ pub fn process_instruction<'a>(
             // process_leave_fund(program_id, fund_name, accounts)
         }
 
-        FundInstruction::ExecuteProposalInvestment { swap_number } => {
+        FundInstruction::ExecuteProposalInvestment { swap_number, fund_name } => {
             msg!("Instruction: Execute Proposal");
-            process_execute_proposal(program_id, accounts, swap_number)
+            process_execute_proposal(program_id, accounts, swap_number, fund_name)
         }
         // FundInstruction::DeleteFund {  } => {
         //     msg!("Instruction: Delete Fund");
@@ -469,6 +468,8 @@ fn process_add_member<'a>(
     fund_account_info.realloc(fund_new_size, false)?;
     fund_data.members.push(*member_account_info.key);
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+
+    // Add refund logic
     // let n = fund_data.members;
     // let refund = (4593600 as u64)/(n*(n+1));
     // // Refund to existing members to equally distribute the rent fee
@@ -773,7 +774,7 @@ fn process_init_investment_proposal(
 
     // Rent Calculation
     let rent = Rent::get()?;
-    let proposal_space = 89 + amounts.len()*74;
+    let proposal_space = 97 + amounts.len()*74;
     let total_rent = rent.minimum_balance(proposal_space);
 
     // Create Proposal Account
@@ -1138,31 +1139,43 @@ fn process_execute_proposal(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     swap_number: u8,
+    fund_name: String,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
     let account_iter = &mut accounts.iter();
-    let payer_info = next_account_info(account_iter)?;
-    let rent_account_info = next_account_info(account_iter)?;
-    let fund_account_info = next_account_info(account_iter)?;
-    let vault_account_info = next_account_info(account_iter)?;
-    let proposal_account_info = next_account_info(account_iter)?;
-    let token_program_2022_info = next_account_info(account_iter)?;
-    let token_program_std_info = next_account_info(account_iter)?;
-    let raydium_clmm_program = next_account_info(account_iter)?;
-    let amm_config = next_account_info(account_iter)?;
-    let pool_state = next_account_info(account_iter)?;
-    let input_token_account = next_account_info(account_iter)?;
-    let output_token_account = next_account_info(account_iter)?;
-    let input_vault_ata = next_account_info(account_iter)?;
-    let output_vault_ata = next_account_info(account_iter)?;
-    let observation_state = next_account_info(account_iter)?;
-    let memo_program = next_account_info(account_iter)?;
+    let payer_info = next_account_info(account_iter)?; // payer ...............................................
+    let rent_account_info = next_account_info(account_iter)?; // rent account .................................
+    let fund_account_info = next_account_info(account_iter)?; // fund account .................................
+    let vault_account_info = next_account_info(account_iter)?; // fund's vault account ........................
+    let proposal_account_info = next_account_info(account_iter)?; // proposal account .........................
+    let proposer_account_info = next_account_info(account_iter)?; // proposer wallet ......... ................
+    let proposer_global_info = next_account_info(account_iter)?; // proposer global identity account ..........
+    let token_program_2022_info = next_account_info(account_iter)?; // tokn program 2022 ......................
+    let token_program_std_info = next_account_info(account_iter)?; // tokn program 2020 .......................
+    let raydium_clmm_program = next_account_info(account_iter)?; // raydium clmm program ......................
+    let amm_config = next_account_info(account_iter)?; // Amm config account ..................................
+    let pool_state = next_account_info(account_iter)?; // Pool state account ..................................
+    let input_token_account = next_account_info(account_iter)?; // Fund's vault input token account .. Should exist
+    let output_token_account = next_account_info(account_iter)?; // fund's output token account .. might need to be created
+    let input_vault_ata = next_account_info(account_iter)?; // Raydium pool's input vault ata .................
+    let output_vault_ata = next_account_info(account_iter)?; // Raysium pool's output vault ata ...............
+    let observation_state = next_account_info(account_iter)?; // Observation state account ....................
+    let input_token_mint = next_account_info(account_iter)?; // Input token mint account ......................
+    let output_token_mint = next_account_info(account_iter)?; // Output token mint account ....................
+    let memo_program = next_account_info(account_iter)?; // memo program ......................................
+    let system_program_info = next_account_info(account_iter)?; // system program .............................
+    let ata_program_info = next_account_info(account_iter)?; // ata program ...................................
+    let rent_sysvar_info = next_account_info(account_iter)?; // rent sysvar account ...........................
+
+    if !payer_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
 
     let proposal_data= InvestmentProposalAccount::try_from_slice(&proposal_account_info.data.borrow())?;
     let is_executed = proposal_data.executed;
 
-    
+    // if proposal is executed then return
     if is_executed {
         msg!("Proposal already executed");
         return Err(FundError::InvalidAccountData.into());
@@ -1170,6 +1183,7 @@ fn process_execute_proposal(
 
     let deadline = proposal_data.deadline;
 
+    // if voting deadline hasn't reached yet, return
     if current_time <= deadline {
         msg!("The proposal is still under voting.");
         return Err(FundError::InvalidAccountData.into());
@@ -1181,22 +1195,139 @@ fn process_execute_proposal(
     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     let strength = fund_data.total_deposit;
 
+    // if quorum not reached, error
     if (vote_yes + vote_no) < strength*(3/10) {
         msg!("Quorum not reached");
         return Err(FundError::InvalidInstruction.into());
     }
 
+    // if proposal not in majority, error
     if vote_yes <= vote_no {
         msg!("Not enough votes favouring the trades");
         return Err(FundError::InvalidInstruction.into());
     }
 
-    let input_token_mint = proposal_data.from_assets[swap_number as usize];
-    let output_token_mint = proposal_data.to_assets[swap_number as usize];
+    // Check mints
+    let input_token_mint_key = proposal_data.from_assets[swap_number as usize];
+    let output_token_mint_key = proposal_data.to_assets[swap_number as usize];
+    if input_token_mint_key != *input_token_mint.key || output_token_mint_key != *output_token_mint.key {
+        msg!("Wronf Mints");
+        return Err(FundError::InvalidMints.into());
+    }
+
+    // check fund account
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    if *fund_account_info.key != fund_pda || fund_pda != proposal_data.fund {
+        msg!("Wrong Fund details");
+        return Err(FundError::InvalidFundDetails.into());
+    }
+
+    // verify vault account
+    let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
+    if *vault_account_info.key != vault_pda {
+        msg!("Wring vault account");
+        return Err(FundError::InvaildVaultAccount.into());
+    }
+
+    // verify vault account
+    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
+    if *rent_account_info.key != rent_pda {
+        msg!("Wrong Rent account details");
+        return Err(FundError::InvalidRentAccount.into());
+    }
+
+    // verify proposer details who created the proposal account
+    let (proposer_pda, _proposer_bump) = Pubkey::find_program_address(&[b"user", proposer_account_info.key.as_ref()], program_id);
+    if *proposer_global_info.key != proposer_pda {
+        return Err(FundError::InvalidProposerInfo.into());
+    }
+    let proposer_data = UserAccount::try_from_slice(&proposer_global_info.data.borrow())?;
+    let user_specific = proposer_data
+        .funds
+        .iter()
+        .find(|entry| entry.fund == *fund_account_info.key)
+        .ok_or(FundError::InvalidAccountData)?;
+
+    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(
+        &[
+            b"proposal-investment",
+            proposer_account_info.key.as_ref(),
+            &user_specific.num_proposals.to_le_bytes(),
+            fund_account_info.key.as_ref()
+        ],
+        program_id
+    );
+
+    if proposal_pda != *proposal_account_info.key {
+        return Err(FundError::InvalidProposalAccount.into());
+    }
+
+    // verigy the vault's token accounts
+    let input_vault_token_account = spl_associated_token_account::get_associated_token_address(
+        &vault_pda,
+        &input_token_mint_key
+    );
+    if *input_token_account.key != input_vault_token_account || input_token_account.data_is_empty() {
+        return Err(FundError::InvalidTokenAccount.into());
+    }
+
+    let output_vault_token_account = spl_associated_token_account::get_associated_token_address(
+        &vault_pda,
+        &output_token_mint_key
+    );
+    if *output_token_account.key != output_vault_token_account {
+        return Err(FundError::InvalidTokenAccount.into());
+    }
+
+    // if vault's output token account doesn't exist, create it
+    if output_token_account.data_is_empty() {
+        msg!("Creating Vault ATA...");
+
+        invoke_signed(
+            &create_associated_token_account(
+                payer_info.key,
+                vault_account_info.key,
+                output_token_mint.key,
+                token_program_std_info.key
+            ),
+            &[
+                payer_info.clone(),
+                output_token_account.clone(),
+                vault_account_info.clone(),
+                output_token_mint.clone(),
+                system_program_info.clone(),
+                token_program_std_info.clone(),
+                ata_program_info.clone(),
+                rent_sysvar_info.clone(),
+            ],
+            &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
+        )?;
+    }
+
     let amount = proposal_data.amounts[swap_number as usize];
     let slippage = proposal_data.slippage[swap_number as usize];
 
-    let accounts_needed: Vec<AccountMeta> = vec![
+    let discriminator = "2b04ed0b1ac91e62".as_bytes();
+    let min_amount_out = amount
+        .checked_mul(10000u64 - (slippage as u64))
+        .unwrap()
+        / 10000u64;
+    let other_amount_threshold = min_amount_out as u64;
+    let sqrt_price_limit_x64 = 0 as u128;
+    let is_base_input = true;
+
+    let args = SwapV2Args {
+        amount,
+        other_amount_threshold,
+        sqrt_price_limit_x64,
+        is_base_input
+    };
+
+    let mut instruction_data = discriminator.to_vec();
+    instruction_data.extend_from_slice(&args.try_to_vec().unwrap());
+
+
+    let mut accounts_needed: Vec<AccountMeta> = vec![
         AccountMeta::new(payer_info.key.clone(), true),
         AccountMeta::new_readonly(amm_config.key.clone(), false),
         AccountMeta::new(pool_state.key.clone(), false),
@@ -1208,19 +1339,37 @@ fn process_execute_proposal(
         AccountMeta::new_readonly(token_program_std_info.key.clone(), false),
         AccountMeta::new_readonly(token_program_2022_info.key.clone(), false),
         AccountMeta::new_readonly(memo_program.key.clone(), false),
-        AccountMeta::new(input_token_mint.clone(), false),
-        AccountMeta::new(output_token_mint.clone(), false),
+        AccountMeta::new(input_token_mint.key.clone(), false),
+        AccountMeta::new(output_token_mint.key.clone(), false),
     ];
 
-    let accounts_size = accounts.len();
+    let mut account_infos = vec![
+        payer_info.clone(),
+        amm_config.clone(),
+        pool_state.clone(),
+        input_token_account.clone(),
+        output_token_account.clone(),
+        input_vault_ata.clone(),
+        output_vault_ata.clone(),
+        observation_state.clone(),
+        token_program_std_info.clone(),
+        token_program_2022_info.clone(),
+        memo_program.clone(),
+        input_token_mint.clone(),
+        output_token_mint.clone(),
+    ];
 
     for acc in account_iter {
         accounts_needed.push(AccountMeta::new(acc.key.clone(), false));
+        account_infos.push(acc.clone());
     }
 
     let swap_cpi_instruction = Instruction {
         program_id: *raydium_clmm_program.key,
         accounts: accounts_needed,
+        data: instruction_data
     };
+
+    invoke(&swap_cpi_instruction, &account_infos)?;
     Ok(())
 }

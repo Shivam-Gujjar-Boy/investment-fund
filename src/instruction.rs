@@ -1,6 +1,6 @@
 use solana_program::{
     program_error::ProgramError,
-    pubkey::{Pubkey, PUBKEY_BYTES},
+    pubkey::Pubkey,
 };
 use crate::errors::FundError;
 use borsh::{BorshSerialize, BorshDeserialize};
@@ -70,7 +70,9 @@ pub enum FundInstruction {
     // 8. Voter Governance Token Account
     Vote {
         vote: u8,
-        fund_name: Vec<u8>,
+        fund_name: String,
+        proposal_index: u8,
+        vec_index: u8,
     },
 
     DeleteFund {},
@@ -85,6 +87,8 @@ pub enum FundInstruction {
     ExecuteProposalInvestment {
         swap_number: u8,
         fund_name: String,
+        proposal_index: u8,
+        vec_index: u8
     },
     Execute { proposal: Pubkey },
     LeaveFund{fund_name: String },
@@ -110,24 +114,26 @@ impl FundInstruction {
                 let (&num_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amounts, rest) = Self::unpack_amounts(rest, num_of_swaps)?;
                 let (slippage, rest) = Self::unpack_slippage(rest, num_of_swaps)?;
-                // let (dex_tags, rest) = Self::unpack_dex_tags(rest, num_of_swaps)?;
                 let (deadline, rest) = Self::unpack_deadline(rest)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::InitProposalInvestment {
                     amounts,
                     slippage,
-                    // dex_tags,
                     deadline,
                     fund_name,
                 }
             }
             2 => {
                 let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&vec_index, _rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 Self::Vote {
                     vote,
                     fund_name,
+                    proposal_index,
+                    vec_index
                 }
             }
             3 => {
@@ -135,14 +141,18 @@ impl FundInstruction {
                 Self::AddFundMember { fund_name }
             }
             4 => {
-                let (&swap_number, _rest) = rest
+                let (&swap_number, rest) = rest
                     .split_first()
                     .ok_or(FundError::InstructionUnpackError)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&vec_index, _rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
 
                 Self::ExecuteProposalInvestment {
                     swap_number,
-                    fund_name
+                    fund_name,
+                    proposal_index,
+                    vec_index
                 }
             }
             5 => {
@@ -184,21 +194,21 @@ impl FundInstruction {
         Ok((num, rest))
     }
 
-    fn unpack_seed(input: &[u8]) -> Result<(Vec<u8>, &[u8]), ProgramError> {
-        if input.len() < PUBKEY_BYTES {
-            return Err(FundError::InstructionUnpackError.into());
-        }
+    // fn unpack_seed(input: &[u8]) -> Result<(Vec<u8>, &[u8]), ProgramError> {
+    //     if input.len() < PUBKEY_BYTES {
+    //         return Err(FundError::InstructionUnpackError.into());
+    //     }
 
-        let mut seed: Vec<u8> = Vec::new();
-        let mut input_slice = input;
-        for _i in 0..PUBKEY_BYTES {
-            let (byte, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;
-            seed.push(*byte);
-            input_slice = rest;
-        }
+    //     let mut seed: Vec<u8> = Vec::new();
+    //     let mut input_slice = input;
+    //     for _i in 0..PUBKEY_BYTES {
+    //         let (byte, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;
+    //         seed.push(*byte);
+    //         input_slice = rest;
+    //     }
 
-        Ok((seed, input_slice))
-    }
+    //     Ok((seed, input_slice))
+    // }
 
     fn unpack_amount(input: &[u8]) -> Result<(u64, &[u8]), ProgramError> {
         if input.len() < BYTE_SIZE_8 {

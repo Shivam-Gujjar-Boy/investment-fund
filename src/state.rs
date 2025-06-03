@@ -7,11 +7,10 @@ pub struct FundAccount {
     pub total_deposit: u64,
     pub governance_mint: Pubkey,
     pub vault: Pubkey,
-    pub is_initialized: bool,
+    pub current_proposal_index: u8,
     pub created_at: i64,
     pub is_private: u8,
     pub members: Vec<Pubkey>,
-    // pub dex_program_ids: Vec<(u8, Pubkey)>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -35,14 +34,19 @@ pub struct UserSpecific {
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
-pub struct InvestmentProposalAccount {
+pub struct ProposalAggregatorAccount {
     pub fund: Pubkey,
+    pub index: u8,
+    pub proposals: Vec<Proposal>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct Proposal {
     pub proposer: Pubkey,
     pub from_assets: Vec<Pubkey>,
     pub to_assets: Vec<Pubkey>,
     pub amounts: Vec<u64>,
     pub slippage: Vec<u16>,
-    // pub dex_tags: Vec<u8>,
     pub votes_yes: u64,
     pub votes_no: u64,
     pub creation_time: i64,
@@ -52,8 +56,9 @@ pub struct InvestmentProposalAccount {
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct VoteAccount {
-    pub voter: Pubkey,
-    pub vote: u8,
+    pub proposal_index: u8,
+    pub vec_index: u8,
+    pub voters: Vec<(Pubkey, u8)>
 }
 
 #[derive(BorshSerialize)]

@@ -17,6 +17,7 @@ pub enum FundError {
     InvaildVaultAccount,
     InvalidProposerInfo,
     InvalidProposalAccount,
+    InvalidVoteAccount,
 }
 
 impl From<FundError> for ProgramError {

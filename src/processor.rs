@@ -881,6 +881,10 @@ fn process_init_investment_proposal(
         let current_rent_exempt = proposal_aggregator_info.lamports();
         let new_rent_exempt = rent.minimum_balance(new_aggregator_size);
 
+        msg!("Current aggregator size: {}", current_proposal_space);
+        msg!("New aggregator size: {}", new_aggregator_size);
+        msg!("Proposals count before: {}", proposal_aggregator_data.proposals.len());
+
         if new_rent_exempt > current_rent_exempt {
             invoke(
                 &system_instruction::transfer(

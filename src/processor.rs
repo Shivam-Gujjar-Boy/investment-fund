@@ -883,7 +883,8 @@ fn process_init_investment_proposal(
 
         msg!("Current aggregator size: {}", current_proposal_space);
         msg!("New aggregator size: {}", new_aggregator_size);
-        msg!("Proposals count before: {}", proposal_aggregator_data.proposals.len());
+        // msg!("Proposals count before: {}", proposal_aggregator_data.proposals.len());
+        msg!("{}", proposal_aggregator_info.lamports());
 
         if new_rent_exempt > current_rent_exempt {
             invoke(
@@ -896,7 +897,11 @@ fn process_init_investment_proposal(
             )?;
         }
 
+        msg!("{}", proposal_aggregator_info.lamports());
+
         proposal_aggregator_info.realloc(new_aggregator_size, false)?;
+        msg!("Hello aditya, shivam ke papa ji");
+        
         let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
 
         proposal_aggregator_data.proposals.push(proposal_info);

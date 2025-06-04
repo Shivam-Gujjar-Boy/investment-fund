@@ -771,7 +771,6 @@ fn process_init_investment_proposal(
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", proposer_account_info.key.as_ref()], program_id);
     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     let current_index = fund_data.current_proposal_index;
-    let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
 
     if *fund_account_info.key != fund_pda || *user_account_info.key != user_pda {
         return Err(FundError::InvalidAccountData.into());
@@ -779,7 +778,7 @@ fn process_init_investment_proposal(
 
     let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(
         &[
-            b"proposal-aggreagtor",
+            b"proposal-aggregator",
             &[current_index],
             fund_pda.as_ref()
         ],
@@ -788,7 +787,7 @@ fn process_init_investment_proposal(
 
     let (new_proposal_pda, new_proposal_bump) = Pubkey::find_program_address(
         &[
-            b"proposal-aggreagtor",
+            b"proposal-aggregator",
             &[current_index + 1],
             fund_pda.as_ref()
         ],
@@ -834,13 +833,14 @@ fn process_init_investment_proposal(
 
     // Rent Calculation
     let rent = Rent::get()?;
-    let proposal_space = 65 + to_assets_info.len()*74;
+    // let proposal_space = 81 + to_assets_info.len()*74;
+    let proposal_space = 155;
     let current_proposal_space = proposal_aggregator_info.data_len();
 
     let mut flag = false;
 
     // check if new proposal aggregator is required
-    if (current_proposal_space + proposal_space) > 10*1024 as usize {
+    if (current_proposal_space + proposal_space) > 10240 as usize {
         // Create Proposal Account
         invoke_signed(
             &system_instruction::create_account(
@@ -892,8 +892,8 @@ fn process_init_investment_proposal(
             )?;
         }
 
-        let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
         proposal_aggregator_info.realloc(new_aggregator_size, false)?;
+        let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
 
         proposal_aggregator_data.proposals.push(proposal_info);
         proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
@@ -956,6 +956,8 @@ fn process_init_investment_proposal(
 
         vote_info.serialize(&mut &mut vote_account_b_info.data.borrow_mut()[..])?;
     }
+
+    let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
 
     if let Some(user_specific) = user_data
         .funds

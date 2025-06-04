@@ -758,7 +758,8 @@ fn process_init_investment_proposal(
     let proposal_aggregator_info = next_account_info(accounts_iter)?; // Proposal Account ........................
     let system_program_info = next_account_info(accounts_iter)?; // System Program ...............................
     let new_proposal_aggregator_info = next_account_info(accounts_iter)?; // new proposal aggregator account .....
-    let vote_account_info = next_account_info(accounts_iter)?; // vote account ...................................
+    let vote_account_a_info = next_account_info(accounts_iter)?; // vote account 1 ...............................
+    let vote_account_b_info = next_account_info(accounts_iter)?; // vote account 2 ...............................
 
     // Proposer needs to be signer
     if !proposer_account_info.is_signer {
@@ -910,25 +911,13 @@ fn process_init_investment_proposal(
 
     let (vote_pda, vote_bump) = Pubkey::find_program_address(&[b"vote", &[proposal_index], &[vec_index], fund_account_info.key.as_ref()], program_id);
 
-    if *vote_account_info.key != vote_pda {
+    if *vote_account_a_info.key != vote_pda && *vote_account_b_info.key != vote_pda {
         msg!("Wrong vote account");
         return Err(FundError::InvalidVoteAccount.into());
     }
 
     let vote_account_size = 6 as usize;
     let vote_rent = rent.minimum_balance(vote_account_size);
-
-    invoke_signed(
-        &system_instruction::create_account(
-            proposer_account_info.key,
-            vote_account_info.key,
-            vote_rent,
-            vote_account_size as u64,
-            program_id
-        ),
-        &[system_program_info.clone(), proposer_account_info.clone(), vote_account_info.clone()],
-        &[&[b"vote", &[proposal_index], &[vec_index], &[vote_bump]]]
-    )?;
 
     let voters: Vec<(Pubkey, u8)> = vec![];
 
@@ -938,7 +927,35 @@ fn process_init_investment_proposal(
         voters
     };
 
-    vote_info.serialize(&mut &mut vote_account_info.data.borrow_mut()[..])?;
+    if *vote_account_a_info.key == vote_pda {
+        invoke_signed(
+            &system_instruction::create_account(
+                proposer_account_info.key,
+                vote_account_a_info.key,
+                vote_rent,
+                vote_account_size as u64,
+                program_id
+            ),
+            &[system_program_info.clone(), proposer_account_info.clone(), vote_account_a_info.clone()],
+            &[&[b"vote", &[proposal_index], &[vec_index], &[vote_bump]]]
+        )?;
+
+        vote_info.serialize(&mut &mut vote_account_a_info.data.borrow_mut()[..])?;
+    } else {
+        invoke_signed(
+            &system_instruction::create_account(
+                proposer_account_info.key,
+                vote_account_b_info.key,
+                vote_rent,
+                vote_account_size as u64,
+                program_id
+            ),
+            &[system_program_info.clone(), proposer_account_info.clone(), vote_account_b_info.clone()],
+            &[&[b"vote", &[proposal_index], &[vec_index], &[vote_bump]]]
+        )?;
+
+        vote_info.serialize(&mut &mut vote_account_b_info.data.borrow_mut()[..])?;
+    }
 
     if let Some(user_specific) = user_data
         .funds

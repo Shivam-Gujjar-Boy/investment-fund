@@ -58,9 +58,9 @@ pub fn process_instruction<'a>(
             process_init_investment_proposal(program_id, accounts, amounts, slippage, deadline, fund_name)
         }
 
-        FundInstruction::Vote {vote, fund_name, proposal_index, vec_index} => {
+        FundInstruction::Vote {vote, proposal_index, vec_index, fund_name} => {
             msg!("Instruction: Voting on Proposal");
-            process_vote_on_proposal(program_id, accounts, vote, fund_name, proposal_index, vec_index)
+            process_vote_on_proposal(program_id, accounts, vote, proposal_index, vec_index, fund_name)
         }
 
         FundInstruction::InitRentAccount {  } => {
@@ -329,6 +329,16 @@ fn process_init_fund_account<'a>(
     };
     vault_data.serialize(&mut &mut vault_account_info.data.borrow_mut()[..])?;
 
+    let proposals: Vec<Proposal> = vec![];
+
+    let proposal_aggregator_data = ProposalAggregatorAccount {
+        fund: *fund_account_info.key,
+        index: 0 as u8,
+        proposals
+    };
+
+    proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
+
     msg!("Fund Initialization successful");
 
     Ok(())
@@ -483,8 +493,10 @@ fn process_add_member<'a>(
 
     // Reallocate new bytes for storage of new member pubkey
     fund_account_info.realloc(fund_new_size, false)?;
+    let mut fund_data_2 = fund_account_info.data.borrow_mut();
+    msg!("raw fund data after realllocation: {:?}", fund_data_2);
     fund_data.members.push(*member_account_info.key);
-    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+    fund_data.serialize(&mut &mut fund_data_2[..])?;
 
     // Add refund logic
     // let n = fund_data.members;
@@ -738,7 +750,6 @@ fn process_init_deposit_token(
 
     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
 
-
     Ok(())
 }
 
@@ -751,6 +762,7 @@ fn process_init_investment_proposal(
     fund_name: String,
 ) -> ProgramResult {
     let creation_time = Clock::get()?.unix_timestamp;
+
     let accounts_iter = &mut accounts.iter();
     let proposer_account_info = next_account_info(accounts_iter)?; // Proposer Wallet ............................
     let user_account_info = next_account_info(accounts_iter)?; // Proposer's Global Account ......................
@@ -818,36 +830,27 @@ fn process_init_investment_proposal(
     let to_assets_mints: Vec<Pubkey> = to_assets_info.iter().map(|m| *m.key).collect();
 
     // Deserialization and Serialization of Proposal Account data
-    let proposal_info = Proposal {
-        proposer: *proposer_account_info.key,
-        from_assets: from_assets_mints,
-        to_assets: to_assets_mints,
-        amounts,
-        slippage,
-        votes_yes: 0 as u64,
-        votes_no: 0 as u64,
-        creation_time,
-        deadline,
-        executed: false
-    };
+    // let proposal_info = 
 
     // Rent Calculation
     let rent = Rent::get()?;
     // let proposal_space = 81 + to_assets_info.len()*74;
-    let proposal_space = 155;
+    let extra_proposal_space = 155 as usize;
     let current_proposal_space = proposal_aggregator_info.data_len();
 
     let mut flag = false;
 
+    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+
     // check if new proposal aggregator is required
-    if (current_proposal_space + proposal_space) > 10240 as usize {
+    if (current_proposal_space + extra_proposal_space) > 10240 as usize {
         // Create Proposal Account
         invoke_signed(
             &system_instruction::create_account(
                 proposer_account_info.key,
                 new_proposal_aggregator_info.key,
-                rent.minimum_balance(37 + proposal_space),
-                (37 + proposal_space) as u64,
+                rent.minimum_balance(37 + extra_proposal_space),
+                (37 + extra_proposal_space) as u64,
                 program_id
             ),
             &[
@@ -863,7 +866,18 @@ fn process_init_investment_proposal(
             ]]
         )?;
 
-        let proposals_vec: Vec<Proposal> = vec![proposal_info];
+        let proposals_vec: Vec<Proposal> = vec![ Proposal {
+            proposer: *proposer_account_info.key,
+            from_assets: from_assets_mints,
+            to_assets: to_assets_mints,
+            amounts,
+            slippage,
+            votes_yes: 0 as u64,
+            votes_no: 0 as u64,
+            creation_time,
+            deadline,
+            executed: false
+        }];
 
         let new_proposal_data = ProposalAggregatorAccount {
             fund: *fund_account_info.key,
@@ -877,14 +891,10 @@ fn process_init_investment_proposal(
         fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
         flag = true;
     } else {
-        let new_aggregator_size = proposal_space + current_proposal_space;
+        let new_aggregator_size = extra_proposal_space + current_proposal_space as usize;
+        msg!("new aggregator size: {}", new_aggregator_size);
         let current_rent_exempt = proposal_aggregator_info.lamports();
         let new_rent_exempt = rent.minimum_balance(new_aggregator_size);
-
-        msg!("Current aggregator size: {}", current_proposal_space);
-        msg!("New aggregator size: {}", new_aggregator_size);
-        // msg!("Proposals count before: {}", proposal_aggregator_data.proposals.len());
-        msg!("{}", proposal_aggregator_info.lamports());
 
         if new_rent_exempt > current_rent_exempt {
             invoke(
@@ -897,15 +907,27 @@ fn process_init_investment_proposal(
             )?;
         }
 
-        msg!("{}", proposal_aggregator_info.lamports());
-
         proposal_aggregator_info.realloc(new_aggregator_size, false)?;
-        msg!("Hello aditya, shivam ke papa ji");
+        // let raw_bytes_proposal = proposal_aggregator_info.data.borrow();
+        // msg!("aggregator bytes = {:?}", raw_bytes_proposal);
         
-        let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+        
+        proposal_aggregator_data.proposals.push( Proposal {
+            proposer: *proposer_account_info.key,
+            from_assets: from_assets_mints,
+            to_assets: to_assets_mints,
+            amounts,
+            slippage,
+            votes_yes: 0 as u64,
+            votes_no: 0 as u64,
+            creation_time,
+            deadline,
+            executed: false
+        });
+        msg!("Hello guys, aditya se badi raand ho hi nhi sakti guys");
 
-        proposal_aggregator_data.proposals.push(proposal_info);
         proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
+        msg!("Bye guys, mai chala aditya ki gaand chodne, kali kali");
     }
 
     let mut proposal_index = current_index;
@@ -915,7 +937,7 @@ fn process_init_investment_proposal(
         proposal_index = current_index + 1;
     } else {
         let proposal_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
-        vec_index = (proposal_data.proposals.len() - 1) as u8;
+        vec_index = (proposal_data.proposals.len()) as u8;
     }
 
     let (vote_pda, vote_bump) = Pubkey::find_program_address(&[b"vote", &[proposal_index], &[vec_index], fund_account_info.key.as_ref()], program_id);
@@ -937,6 +959,7 @@ fn process_init_investment_proposal(
     };
 
     if *vote_account_a_info.key == vote_pda {
+        msg!("yaha aaya");
         invoke_signed(
             &system_instruction::create_account(
                 proposer_account_info.key,
@@ -945,8 +968,8 @@ fn process_init_investment_proposal(
                 vote_account_size as u64,
                 program_id
             ),
-            &[system_program_info.clone(), proposer_account_info.clone(), vote_account_a_info.clone()],
-            &[&[b"vote", &[proposal_index], &[vec_index], &[vote_bump]]]
+            &[proposer_account_info.clone(), vote_account_a_info.clone(), system_program_info.clone()],
+            &[&[b"vote", &[proposal_index], &[vec_index], fund_pda.as_ref(), &[vote_bump]]]
         )?;
 
         vote_info.serialize(&mut &mut vote_account_a_info.data.borrow_mut()[..])?;
@@ -959,8 +982,8 @@ fn process_init_investment_proposal(
                 vote_account_size as u64,
                 program_id
             ),
-            &[system_program_info.clone(), proposer_account_info.clone(), vote_account_b_info.clone()],
-            &[&[b"vote", &[proposal_index], &[vec_index], &[vote_bump]]]
+            &[proposer_account_info.clone(), vote_account_b_info.clone(), system_program_info.clone()],
+            &[&[b"vote", &[proposal_index], &[vec_index], fund_pda.as_ref(), &[vote_bump]]]
         )?;
 
         vote_info.serialize(&mut &mut vote_account_b_info.data.borrow_mut()[..])?;
@@ -988,9 +1011,9 @@ fn process_vote_on_proposal(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     vote: u8,
-    fund_name: String,
     proposal_index: u8,
     vec_index: u8,
+    fund_name: String,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
@@ -1010,6 +1033,7 @@ fn process_vote_on_proposal(
 
     // Pdas derivation
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    msg!("Fund ka naam hai bkl:{}", fund_name);
     let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"vote", &[proposal_index], &[vec_index], fund_account_info.key.as_ref()], program_id);
     let token_account = spl_associated_token_account::get_associated_token_address(
         voter_account_info.key,
@@ -1019,10 +1043,23 @@ fn process_vote_on_proposal(
     let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index], fund_account_info.key.as_ref()], program_id);
 
     // Pdas verification
-    if *fund_account_info.key != fund_pda ||
-        *vote_account_info.key != vote_pda ||
-        token_account != *voter_token_account_info.key ||
-        *proposal_aggregator_info.key != proposal_pda {
+    if *fund_account_info.key != fund_pda {
+        msg!("yahi hai kya 1");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    if *vote_account_info.key != vote_pda {
+        msg!("yahi hai kya 2");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    if token_account != *voter_token_account_info.key {
+        msg!("yahi hai kya 3");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    if *proposal_aggregator_info.key != proposal_pda {
+        msg!("yahi hai kya 4");
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1044,6 +1081,18 @@ fn process_vote_on_proposal(
     let new_rent = rent.minimum_balance(new_vote_space);
     let current_rent = vote_account_info.lamports();
 
+    let mut vote_data = VoteAccount::try_from_slice(&vote_account_info.data.borrow())?;
+
+    let voter_exists = vote_data
+        .voters
+        .iter()
+        .any(|(key, _)| *key == *voter_account_info.key);
+
+    if voter_exists {
+        msg!("BKL tu vote kar chuka hai already");
+        return Err(FundError::AlreadyVoted.into());
+    }
+
     if vote_account_info.data_is_empty() {
         msg!("Vote account should be already created");
         return Err(FundError::InvalidVoteAccount.into());
@@ -1060,12 +1109,15 @@ fn process_vote_on_proposal(
         }
 
         vote_account_info.realloc(new_vote_space, false)?;
-        let mut vote_data = VoteAccount::try_from_slice(&vote_account_info.data.borrow())?;
+        // msg!("vote data : {:?}", vote_data);
+        
         vote_data.voters.push((*voter_account_info.key, vote));
+        // msg!("vote data : {:?}", vote_data);
         vote_data.serialize(&mut &mut vote_account_info.data.borrow_mut()[..])?;
 
         let token_account_data = TokenAccount::unpack(&voter_token_account_info.data.borrow())?;
 
+        msg!("token account gadbad kr rha hai kya");
         if vote != 0 {
             proposal_aggregator_data.proposals[vec_index as usize].votes_yes += token_account_data.amount;
         } else {

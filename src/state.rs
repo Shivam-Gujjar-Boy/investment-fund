@@ -54,7 +54,7 @@ pub struct Proposal {
     pub executed: bool,
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct VoteAccount {
     pub proposal_index: u8,
     pub vec_index: u8,

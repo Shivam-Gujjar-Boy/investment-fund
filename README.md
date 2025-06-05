@@ -1,6 +1,6 @@
 # Solana Investment Fund
 
-A badass decentralized investment platform built on Solana in native Rust. Pool funds with your crew, propose trades, vote with governance tokens, and execute on DEXes—all on-chain, fast, and cheap.
+A decentralized investment platform built on Solana in native Rust. Pool funds with your crew, propose trades, vote with governance tokens, and execute on DEXes—all on-chain, fast, and cheap.
 
 ---
 
@@ -12,14 +12,6 @@ A badass decentralized investment platform built on Solana in native Rust. Pool 
 - **Execution**: Winning proposals trigger trades on the chosen DEX.
 
 Built for speed, built for control, built on Solana.
-
----
-
-## Tech Stack
-- **Solana**: High-throughput blockchain.
-- **Native Rust**: No frameworks, pure low-level grit.
-- **SPL Tokens**: Custom governance tokens per fund.
-- **Borsh**: Serialization that doesn’t suck.
 
 ---
 
@@ -45,7 +37,7 @@ git clone https://github.com/Shivam-Gujjar-Boy/investment-fund.git
 cd investment-fund
 
 # Build the program
-cargo build-bpf
+cargo build-sbf
 
 # Deploy to devnet
 solana program deploy target/deploy/investment_fund.so

@@ -1,6 +1,5 @@
 use solana_program::{
-    program_error::ProgramError,
-    pubkey::Pubkey,
+    program_error::ProgramError, pubkey::Pubkey
 };
 use crate::errors::FundError;
 use borsh::{BorshSerialize, BorshDeserialize};
@@ -70,9 +69,9 @@ pub enum FundInstruction {
     // 8. Voter Governance Token Account
     Vote {
         vote: u8,
-        fund_name: String,
         proposal_index: u8,
         vec_index: u8,
+        fund_name: String,
     },
 
     DeleteFund {},
@@ -126,14 +125,14 @@ impl FundInstruction {
             }
             2 => {
                 let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (&vec_index, _rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&vec_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::Vote {
                     vote,
-                    fund_name,
                     proposal_index,
-                    vec_index
+                    vec_index,
+                    fund_name,
                 }
             }
             3 => {

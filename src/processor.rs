@@ -1068,12 +1068,6 @@ fn process_vote_on_proposal(
         return Err(FundError::InvalidGovernanceMint.into());
     }
 
-    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
-    // let mut proposal_data = proposal_aggregator_data.proposals[vec_index as usize];
-    if proposal_aggregator_data.proposals[vec_index as usize].deadline < current_time {
-        return Err(FundError::VotingCeased.into());
-    }
-
     let rent = Rent::get()?;
     let extra_vote_space = 33 as usize;
     let current_vote_space = vote_account_info.data_len();
@@ -1083,6 +1077,8 @@ fn process_vote_on_proposal(
 
     let mut vote_data = VoteAccount::try_from_slice(&vote_account_info.data.borrow())?;
 
+    msg!("vote data : {:?}", vote_data);
+
     let voter_exists = vote_data
         .voters
         .iter()
@@ -1091,6 +1087,12 @@ fn process_vote_on_proposal(
     if voter_exists {
         msg!("BKL tu vote kar chuka hai already");
         return Err(FundError::AlreadyVoted.into());
+    }
+
+    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+    // let mut proposal_data = proposal_aggregator_data.proposals[vec_index as usize];
+    if proposal_aggregator_data.proposals[vec_index as usize].deadline < current_time {
+        return Err(FundError::VotingCeased.into());
     }
 
     if vote_account_info.data_is_empty() {
@@ -1109,7 +1111,6 @@ fn process_vote_on_proposal(
         }
 
         vote_account_info.realloc(new_vote_space, false)?;
-        // msg!("vote data : {:?}", vote_data);
         
         vote_data.voters.push((*voter_account_info.key, vote));
         // msg!("vote data : {:?}", vote_data);
@@ -1312,7 +1313,7 @@ fn process_execute_proposal(
 
     let account_iter = &mut accounts.iter();
     let payer_info = next_account_info(account_iter)?; // payer ...............................................
-    let rent_account_info = next_account_info(account_iter)?; // rent account .................................
+    // let rent_account_info = next_account_info(account_iter)?; // rent account .................................
     let fund_account_info = next_account_info(account_iter)?; // fund account .................................
     let vault_account_info = next_account_info(account_iter)?; // fund's vault account ........................
     let proposal_aggregator_info = next_account_info(account_iter)?; // proposal account ......................
@@ -1401,11 +1402,11 @@ fn process_execute_proposal(
     }
 
     // verify vault account
-    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
-    if *rent_account_info.key != rent_pda {
-        msg!("Wrong Rent account details");
-        return Err(FundError::InvalidRentAccount.into());
-    }
+    // let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
+    // if *rent_account_info.key != rent_pda {
+    //     msg!("Wrong Rent account details");
+    //     return Err(FundError::InvalidRentAccount.into());
+    // }
 
     // verify the vault's token accounts
     let input_vault_token_account = spl_associated_token_account::get_associated_token_address(

@@ -144,7 +144,7 @@ impl FundInstruction {
                     .split_first()
                     .ok_or(FundError::InstructionUnpackError)?;
                 let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (&vec_index, _rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&vec_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::ExecuteProposalInvestment {

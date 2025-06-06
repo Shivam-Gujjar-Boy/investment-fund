@@ -1,4 +1,6 @@
+use std::io::Write;
 use std::vec;
+// use hex;
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::instruction::{Instruction, AccountMeta};
 use solana_program:: pubkey;
@@ -12,7 +14,7 @@ use crate::state::UserSpecific;
 use crate::{
     errors::FundError,
     instruction::FundInstruction,
-    state::{FundAccount, Proposal, ProposalAggregatorAccount, UserAccount, VaultAccount, VoteAccount, SwapV2Args}
+    state::{FundAccount, Proposal, ProposalAggregatorAccount, UserAccount, VaultAccount, VoteAccount}
 };
 use mpl_token_metadata::types::DataV2;
 use mpl_token_metadata::instructions::{CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs};
@@ -1453,7 +1455,8 @@ fn process_execute_proposal(
     let amount = proposal_aggregator_data.proposals[vec_index as usize].amounts[swap_number as usize];
     let slippage = proposal_aggregator_data.proposals[vec_index as usize].slippage[swap_number as usize];
 
-    let discriminator = "2b04ed0b1ac91e62".as_bytes();
+    let discriminator: &[u8] = &[0x2b, 0x04, 0xed, 0x0b, 0x1a, 0xc9, 0x1e, 0x62];
+    msg!("discriminator length: {}", discriminator.len());
     let min_amount_out = amount
         .checked_mul(10000u64 - (slippage as u64))
         .unwrap()
@@ -1462,19 +1465,25 @@ fn process_execute_proposal(
     let sqrt_price_limit_x64 = 0 as u128;
     let is_base_input = true;
 
-    let args = SwapV2Args {
-        amount,
-        other_amount_threshold,
-        sqrt_price_limit_x64,
-        is_base_input
-    };
+    let mut args_buf = Vec::with_capacity(33);
+    args_buf.write_all(&amount.to_le_bytes()).unwrap();
+    args_buf.write_all(&other_amount_threshold.to_le_bytes()).unwrap();
+    args_buf.write_all(&(sqrt_price_limit_x64 as u64).to_le_bytes()).unwrap();
+    args_buf.write_all(&((sqrt_price_limit_x64 >> 64) as u64).to_le_bytes()).unwrap();
+    args_buf.write_all(&[is_base_input as u8]).unwrap();
 
     let mut instruction_data = discriminator.to_vec();
-    instruction_data.extend_from_slice(&args.try_to_vec().unwrap());
+    instruction_data.extend(args_buf);
 
+    // msg!("Instruction data is : {:?}", instruction_data);
+
+    // let x = 0 as u64;
+    // if x == 0 as u64 {
+    //     return Err(FundError::AlreadyVoted.into());
+    // }
 
     let mut accounts_needed: Vec<AccountMeta> = vec![
-        AccountMeta::new(payer_info.key.clone(), true),
+        AccountMeta::new(vault_account_info.key.clone(), true),
         AccountMeta::new_readonly(amm_config.key.clone(), false),
         AccountMeta::new(pool_state.key.clone(), false),
         AccountMeta::new(input_token_account.key.clone(), false),
@@ -1490,7 +1499,7 @@ fn process_execute_proposal(
     ];
 
     let mut account_infos = vec![
-        payer_info.clone(),
+        vault_account_info.clone(),
         amm_config.clone(),
         pool_state.clone(),
         input_token_account.clone(),
@@ -1516,7 +1525,7 @@ fn process_execute_proposal(
         data: instruction_data
     };
 
-    invoke(&swap_cpi_instruction, &account_infos)?;
+    invoke_signed(&swap_cpi_instruction, &account_infos, &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]])?;
 
     proposal_aggregator_data.proposals[vec_index as usize].executed = true;
     proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;

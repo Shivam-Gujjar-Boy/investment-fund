@@ -341,7 +341,7 @@ fn process_init_fund_account<'a>(
 
     proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
 
-    msg!("Fund Initialization successful");
+    msg!("[FUND-ACTIVITY] Fund created by: {} at {}", creator_wallet_info.key.to_string(), current_time);
 
     Ok(())
 }
@@ -515,6 +515,8 @@ fn process_add_member<'a>(
     //         &[member_account_info.clone(), receiver_account_info.clone(), system_program_info.clone()],
     //     )?;
     // }
+
+    msg!("[FUND-ACTIVITY] Member joined: {}", member_account_info.key.to_string());
 
     Ok(())
 
@@ -752,6 +754,8 @@ fn process_init_deposit_token(
 
     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
 
+    msg!("[FUND-ACTIVITY] Token deposit: {} of {} by {}", amount, mint_account_info.key.to_string(), member_account_info.key.to_string());
+
     Ok(())
 }
 
@@ -837,7 +841,7 @@ fn process_init_investment_proposal(
     // Rent Calculation
     let rent = Rent::get()?;
     // let proposal_space = 81 + to_assets_info.len()*74;
-    let extra_proposal_space = 155 as usize;
+    let extra_proposal_space = (81 + to_assets_info.len()*74) as usize;
     let current_proposal_space = proposal_aggregator_info.data_len();
 
     let mut flag = false;
@@ -1005,6 +1009,8 @@ fn process_init_investment_proposal(
 
     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
 
+    msg!("[FUND-ACTIVITY] Proposal created: ({}, {}) by {}", proposal_index, vec_index, proposer_account_info.key.to_string());
+
     Ok(())
 }
 
@@ -1129,6 +1135,8 @@ fn process_vote_on_proposal(
 
         proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
     }
+
+    msg!("[FUND-ACTIVITY] Vote: {} on proposal ({}, {})", voter_account_info.key.to_string(), proposal_index, vec_index);
 
     Ok(())
 }
@@ -1475,13 +1483,6 @@ fn process_execute_proposal(
     let mut instruction_data = discriminator.to_vec();
     instruction_data.extend(args_buf);
 
-    // msg!("Instruction data is : {:?}", instruction_data);
-
-    // let x = 0 as u64;
-    // if x == 0 as u64 {
-    //     return Err(FundError::AlreadyVoted.into());
-    // }
-
     let mut accounts_needed: Vec<AccountMeta> = vec![
         AccountMeta::new(vault_account_info.key.clone(), true),
         AccountMeta::new_readonly(amm_config.key.clone(), false),
@@ -1529,5 +1530,8 @@ fn process_execute_proposal(
 
     proposal_aggregator_data.proposals[vec_index as usize].executed = true;
     proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
+
+    msg!("[FUND-ACTIVITY] Proposal executed: ({}, {})", proposal_index, vec_index);
+
     Ok(())
 }

@@ -45,8 +45,8 @@ Let:
 
 Then:
 
-- Each joining member pays: Fee_per_member = C/n = 0.022/n
-- Refund to creator at any point: Refund_to_creator = j * (0.022)/n
+- Each joining member pays: Fee_per_member = `C/n = 0.022/n`
+- Refund to creator at any point: Refund_to_creator = `j * (0.022)/n`
 - Once `j = n`, full refund of `0.022 SOL` is completed.
 - If `j > n`, extra members pay **no fee**.
 

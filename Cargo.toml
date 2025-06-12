@@ -6,6 +6,9 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[features]
+no-entrypoint = []
+
 [dependencies]
 solana-program = "1.18.4"
 borsh = "0.10"
@@ -15,4 +18,4 @@ thiserror = "1.0"
 spl-associated-token-account = { version = "2.0", features = ["no-entrypoint"]}
 mpl-token-metadata = "3.1.0"
 hex = "0.4"
-# raydium = { git = "https://github.com/raydium-io/raydium-sdk.git"}
+solana-security-txt = {version = "1.1.1"}

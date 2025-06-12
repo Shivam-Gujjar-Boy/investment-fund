@@ -341,7 +341,7 @@ fn process_init_fund_account<'a>(
 
     proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
 
-    msg!("[FUND-ACTIVITY] Fund created by: {} at {}", creator_wallet_info.key.to_string(), current_time);
+    msg!("[FUND-ACTIVITY] {} {} Fund created by: {}", fund_account_info.key.to_string(), current_time, creator_wallet_info.key.to_string());
 
     Ok(())
 }
@@ -516,7 +516,7 @@ fn process_add_member<'a>(
     //     )?;
     // }
 
-    msg!("[FUND-ACTIVITY] Member joined: {}", member_account_info.key.to_string());
+    msg!("[FUND-ACTIVITY] {} {} Member joined: {}", fund_account_info.key.to_string(), current_time, member_account_info.key.to_string());
 
     Ok(())
 
@@ -754,7 +754,7 @@ fn process_init_deposit_token(
 
     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
 
-    msg!("[FUND-ACTIVITY] Token deposit: {} of {} by {}", amount, mint_account_info.key.to_string(), member_account_info.key.to_string());
+    msg!("[FUND-ACTIVITY] {} {} Token deposit: {} of {} by {}", fund_account_info.key.to_string(), current_time, amount, mint_account_info.key.to_string(), member_account_info.key.to_string());
 
     Ok(())
 }
@@ -1009,7 +1009,7 @@ fn process_init_investment_proposal(
 
     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
 
-    msg!("[FUND-ACTIVITY] Proposal created: ({}, {}) by {}", proposal_index, vec_index, proposer_account_info.key.to_string());
+    msg!("[FUND-ACTIVITY] {} {} Proposal created: ({}, {}) by {}", fund_account_info.key.to_string(), creation_time, proposal_index, vec_index, proposer_account_info.key.to_string());
 
     Ok(())
 }
@@ -1136,7 +1136,7 @@ fn process_vote_on_proposal(
         proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
     }
 
-    msg!("[FUND-ACTIVITY] Vote: {} on proposal ({}, {})", voter_account_info.key.to_string(), proposal_index, vec_index);
+    msg!("[FUND-ACTIVITY] {} {} Vote: {} on proposal ({}, {})", fund_account_info.key.to_string(), current_time, voter_account_info.key.to_string(), proposal_index, vec_index);
 
     Ok(())
 }
@@ -1531,7 +1531,7 @@ fn process_execute_proposal(
     proposal_aggregator_data.proposals[vec_index as usize].executed = true;
     proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
 
-    msg!("[FUND-ACTIVITY] Proposal executed: ({}, {})", proposal_index, vec_index);
+    msg!("[FUND-ACTIVITY] {} {} Proposal executed: ({}, {})", fund_account_info.key.to_string(), current_time, proposal_index, vec_index);
 
     Ok(())
 }

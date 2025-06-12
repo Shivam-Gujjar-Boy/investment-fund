@@ -926,6 +926,7 @@ dependencies = [
  "hex",
  "mpl-token-metadata",
  "solana-program",
+ "solana-security-txt",
  "spl-associated-token-account",
  "spl-token 3.5.0",
  "thiserror",

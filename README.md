@@ -1,4 +1,4 @@
-# Solana Investment Fund
+# PeerFunds - Decentralized Investment Funds on Solana
 
 A decentralized investment platform built on Solana in native Rust. Pool funds with your crew, propose trades, vote with governance tokens, and execute on DEXes—all on-chain, fast, and cheap.
 
@@ -12,6 +12,46 @@ A decentralized investment platform built on Solana in native Rust. Pool funds w
 - **Execution**: Winning proposals trigger trades on the chosen DEX.
 
 Built for speed, built for control, built on Solana.
+
+---
+
+## Refund Policy for Fund Creators
+
+When a fund is created on PeerFunds, a small amount of SOL (~0.022 SOL) is required to initialize multiple Program Derived Accounts (PDAs), such as:
+
+- Fund Account  
+- Vault Account  
+- Governance Mint Account  
+- Mint Metadata  
+- Proposal Aggregator  
+
+Since the fund creator is not the fund manager but simply the initiator, **PeerFunds enforces a fair cost-sharing mechanism** where joining members contribute to the creation cost.
+
+### How It Works
+
+- While creating the fund, the creator specifies the expected number of members `n`.
+- This value is stored in the fund account.
+- As each member joins, a fixed amount `0.022 / n` SOL is deducted from their wallet and stored in the **PeerFunds rent reserve**.
+- This process continues until `n` members have joined.
+- Once the member count reaches `n`, the total creation cost (`0.022 SOL`) is refunded to the creator from the reserve.
+- Any members joining **after** the `n` threshold do not pay this creation fee.
+
+### Mathematical Representation
+
+Let:
+- `C = 0.022 SOL` (Total fund creation cost)
+- `n = Expected number of members`
+- `j = Current number of joined members` (where `j ≤ n`)
+
+Then:
+
+- Each joining member pays: Fee_per_member = C/n = 0.022/n
+- Refund to creator at any point: Refund_to_creator = j * (0.022)/n
+- Once `j = n`, full refund of `0.022 SOL` is completed.
+- If `j > n`, extra members pay **no fee**.
+
+> ✅ This ensures that fund creation is a collective responsibility and not a burden on the creator alone.
+
 
 ---
 

@@ -222,11 +222,11 @@ impl FundInstruction {
     }
 
     fn unpack_expected(input: &[u8]) -> Result<(u32, &[u8]), ProgramError> {
-        if input.len() < BYTE_SIZE_8*(4 as usize) {
+        if input.len() < (4 as usize) {
             return Err(FundError::InstructionUnpackError.into());
         }
 
-        let (expected_bytes, rest) = input.split_at(BYTE_SIZE_8 * (4 as usize));
+        let (expected_bytes, rest) = input.split_at(4 as usize);
         let expected_members = u32::from_le_bytes(expected_bytes.try_into().expect("Invalid members length"));
 
         Ok((expected_members, rest))

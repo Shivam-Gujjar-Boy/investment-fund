@@ -8,6 +8,9 @@ use solana_program::{
 };
 use spl_token::state::Account as TokenAccount;
 use spl_associated_token_account::instruction::create_associated_token_account;
+use spl_token_2022::instruction::initialize_mint2;
+use spl_token_2022::extension::ExtensionType;
+use spl_token_2022::state::Mint;
 use crate::state::{JoinProposal, JoinProposalAggregator, JoinVoteAccount, UserSpecific};
 use crate::{
     errors::FundError,
@@ -110,7 +113,7 @@ fn process_init_fund_account<'a>(
     let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint .........................
     let vault_account_info = next_account_info(accounts_iter)?; // Vault PDA Account .........................
     let system_program_info = next_account_info(accounts_iter)?; // System Program ...........................
-    let token_program_info = next_account_info(accounts_iter)?; // Token Program (2020) ......................
+    // let token_program_info = next_account_info(accounts_iter)?; // Token Program (2020) ......................
     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA Account ...........................
     let creator_wallet_info = next_account_info(accounts_iter)?; // Creator Wallet Address ...................
     let metadata_account_info = next_account_info(accounts_iter)?; // Metadat PDA for Governance Mint ........
@@ -155,7 +158,9 @@ fn process_init_fund_account<'a>(
     let rent = &Rent::from_account_info(rent_sysvar_info)?;
     let fund_space = 150 as usize;
     let vault_space = 40 as usize;
-    let mint_space = spl_token::state::Mint::LEN;
+    let extensions = vec![ExtensionType::NonTransferable];
+    // let mint_space = spl_token::state::Mint::LEN;
+    let mint_space = ExtensionType::try_calculate_account_len::<Mint>(&extensions)?;
     let proposal_space = 37 as usize;
     let join_proposal_space = 37 as usize;
 
@@ -192,20 +197,20 @@ fn process_init_fund_account<'a>(
             governance_mint_info.key,
             rent.minimum_balance(mint_space),
             mint_space as u64,
-            token_program_info.key,
+            &spl_token_2022::id(),
         ),
         &[creator_wallet_info.clone(), governance_mint_info.clone(), system_program_info.clone()],
         &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]],
     )?;
     invoke_signed(
-        &spl_token::instruction::initialize_mint(
-            token_program_info.key,
+        &initialize_mint2(
+            &spl_token_2022::id(),
             governance_mint_info.key,
             fund_account_info.key,
             None,
             0,
         )?,
-        &[governance_mint_info.clone(), token_program_info.clone(), rent_sysvar_info.clone()],
+        &[governance_mint_info.clone(), rent_sysvar_info.clone()],
         &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]],
     )?;
 
@@ -291,8 +296,8 @@ fn process_init_fund_account<'a>(
 
     // Converting the fund_name to an array of u8 of fixed size 32
     let bytes = fund_name.as_bytes();
-    let mut array = [0u8; 28];
-    let len = bytes.len().min(28);
+    let mut array = [0u8; 27];
+    let len = bytes.len().min(27);
     array[..len].copy_from_slice(&bytes[..len]);
 
     let members: Vec<Pubkey> = vec![*creator_wallet_info.key];
@@ -301,6 +306,7 @@ fn process_init_fund_account<'a>(
     let fund_data = FundAccount {
         name: array,
         expected_members,
+        creator_exists: true,
         total_deposit: 0 as u64,
         governance_mint: *governance_mint_info.key,
         vault: *vault_account_info.key,

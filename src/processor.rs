@@ -526,6 +526,8 @@ fn process_init_join_proposal(
 
     join_vote_data.serialize(&mut &mut vote_account_info.data.borrow_mut()[..])?;
 
+    msg!("[FUND-ACTIVITY] {} {} {} created proposal to join the fund", fund_account_info.key.to_string(), creation_time, joiner_account_info.key.to_string());
+
     Ok(())
 }
 
@@ -610,7 +612,9 @@ fn process_vote_on_join_proposal(
     vote_data.voters.push((*voter_account_info.key, vote));
     vote_data.serialize(&mut &mut vote_account_info.data.borrow_mut()[..])?;
 
-    msg!("[FUND-ACTIVITY] {} {} Member joined: {}", fund_account_info.key.to_string(), current_time, voter_account_info.key.to_string());
+    let join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
+
+    msg!("[FUND-ACTIVITY] {} {} {} voted for addition of {}", fund_account_info.key.to_string(), current_time, voter_account_info.key.to_string(), join_proposal_data.join_proposals[vec_index as usize].joiner.to_string());
 
     Ok(())
 }

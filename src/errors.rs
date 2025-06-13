@@ -18,6 +18,9 @@ pub enum FundError {
     InvalidProposerInfo,
     InvalidProposalAccount,
     InvalidVoteAccount,
+    NotEnoughVotes,
+    AlreadyExecuted,
+    InvalidFundCreator,
 }
 
 impl From<FundError> for ProgramError {

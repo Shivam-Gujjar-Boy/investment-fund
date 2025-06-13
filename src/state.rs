@@ -3,7 +3,8 @@ use borsh::{BorshSerialize, BorshDeserialize};
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct FundAccount {
-    pub name: [u8; 32],
+    pub name: [u8; 28],
+    pub expected_members: u32,
     pub total_deposit: u64,
     pub governance_mint: Pubkey,
     pub vault: Pubkey,
@@ -54,9 +55,31 @@ pub struct Proposal {
     pub executed: bool,
 }
 
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct JoinProposalAggregator {
+    pub fund: Pubkey,
+    pub index: u8,
+    pub join_proposals: Vec<JoinProposal>
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct JoinProposal {
+    pub joiner: Pubkey,
+    pub votes_yes: u64,
+    pub votes_no: u64,
+    pub creation_time: i64,
+    pub executed: bool
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct VoteAccount {
     pub proposal_index: u8,
+    pub vec_index: u8,
+    pub voters: Vec<(Pubkey, u8)>
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct JoinVoteAccount {
     pub vec_index: u8,
     pub voters: Vec<(Pubkey, u8)>
 }

@@ -18,13 +18,25 @@ pub enum FundInstruction {
     // 7. [..] Array of Fund Members
     InitFundAccount { 
         privacy: u8,
+        expected_members: u32,
         fund_name: String,
     },
 
     InitUserAccount { },
 
+    InitJoinProposal {
+        fund_name: String,
+    },
+
+    JoinVote {
+        vote: u8,
+        fund_name: String,
+        vec_index: u8,
+    },
+
     AddFundMember {
         fund_name: String,
+        vec_index: u8,
     },
 
     // 1. Governance Mint Account
@@ -102,10 +114,11 @@ impl FundInstruction {
         Ok(match tag {
             0 => {
                 let (privacy, rest) = Self::unpack_members(rest)?;
-                // let (fund_name, _rest) = Self::unpack_seed(rest)?;
+                let (expected_members, rest) = Self::unpack_expected(rest)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::InitFundAccount {
                     privacy,
+                    expected_members,
                     fund_name,
                 }
             }
@@ -136,8 +149,9 @@ impl FundInstruction {
                 }
             }
             3 => {
+                let (&vec_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
-                Self::AddFundMember { fund_name }
+                Self::AddFundMember { fund_name, vec_index }
             }
             4 => {
                 let (&swap_number, rest) = rest
@@ -178,6 +192,20 @@ impl FundInstruction {
 
                 Self::LeaveFund { fund_name }
             }
+            10 => {
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                Self::InitJoinProposal { fund_name }
+            }
+            11 => {
+                let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&vec_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                Self::JoinVote {
+                    vote,
+                    fund_name,
+                    vec_index
+                }
+            }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());
             }
@@ -193,21 +221,16 @@ impl FundInstruction {
         Ok((num, rest))
     }
 
-    // fn unpack_seed(input: &[u8]) -> Result<(Vec<u8>, &[u8]), ProgramError> {
-    //     if input.len() < PUBKEY_BYTES {
-    //         return Err(FundError::InstructionUnpackError.into());
-    //     }
+    fn unpack_expected(input: &[u8]) -> Result<(u32, &[u8]), ProgramError> {
+        if input.len() < BYTE_SIZE_8*(4 as usize) {
+            return Err(FundError::InstructionUnpackError.into());
+        }
 
-    //     let mut seed: Vec<u8> = Vec::new();
-    //     let mut input_slice = input;
-    //     for _i in 0..PUBKEY_BYTES {
-    //         let (byte, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;
-    //         seed.push(*byte);
-    //         input_slice = rest;
-    //     }
+        let (expected_bytes, rest) = input.split_at(BYTE_SIZE_8 * (4 as usize));
+        let expected_members = u32::from_le_bytes(expected_bytes.try_into().expect("Invalid members length"));
 
-    //     Ok((seed, input_slice))
-    // }
+        Ok((expected_members, rest))
+    }
 
     fn unpack_amount(input: &[u8]) -> Result<(u64, &[u8]), ProgramError> {
         if input.len() < BYTE_SIZE_8 {
@@ -262,22 +285,6 @@ impl FundInstruction {
 
         Ok((slippage, rest))
     }
-
-    // fn unpack_dex_tags(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u8>, &[u8]), ProgramError> {
-    //     if input.len() < num_of_swaps as usize {
-    //         return Err(FundError::InstructionUnpackError.into());
-    //     }
-
-    //     let mut dex_tags: Vec<u8> = Vec::new();
-    //     let mut input_slice = input;
-    //     for _i in 0..num_of_swaps {
-    //         let (dex_tag, rest) = input_slice.split_first().ok_or(FundError::InstructionUnpackError)?;
-    //         dex_tags.push(*dex_tag);
-    //         input_slice = rest;
-    //     }
-
-    //     Ok((dex_tags, input_slice))
-    // }
 
     fn unpack_deadline(input: &[u8]) -> Result<(i64, &[u8]), ProgramError> {
         if input.len() < BYTE_SIZE_8 {

@@ -19,6 +19,7 @@ pub enum FundInstruction {
     InitFundAccount { 
         privacy: u8,
         expected_members: u32,
+        symbol_str: String,
         fund_name: String,
     },
 
@@ -115,10 +116,18 @@ impl FundInstruction {
             0 => {
                 let (privacy, rest) = Self::unpack_members(rest)?;
                 let (expected_members, rest) = Self::unpack_expected(rest)?;
+                let (symbol_bytes, rest) = rest.split_at(5 as usize);
+                let symbol = symbol_bytes
+                    .iter()
+                    .take_while(|&&b| b != 0)
+                    .cloned()
+                    .collect::<Vec<u8>>();
+                let symbol_str = String::from_utf8(symbol).unwrap();
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::InitFundAccount {
                     privacy,
                     expected_members,
+                    symbol_str,
                     fund_name,
                 }
             }

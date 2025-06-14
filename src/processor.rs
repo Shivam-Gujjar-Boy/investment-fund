@@ -8,7 +8,7 @@ use solana_program::{
 };
 use spl_token::state::Account as TokenAccount;
 use spl_associated_token_account::instruction::create_associated_token_account;
-use spl_token_2022::instruction::initialize_mint2;
+// use spl_token_2022::instruction::initialize_mint2;
 use spl_token_2022::extension::{
     ExtensionType,
     metadata_pointer,
@@ -37,9 +37,9 @@ pub fn process_instruction<'a>(
     let instruction = FundInstruction::unpack(data)?;
     match instruction {
 
-        FundInstruction::InitFundAccount { privacy, expected_members, fund_name} => {
+        FundInstruction::InitFundAccount { privacy, expected_members, fund_name, symbol_str} => {
             msg!("Instruction: Init Fund Account");
-            process_init_fund_account(program_id, accounts, fund_name, privacy, expected_members)
+            process_init_fund_account(program_id, accounts, fund_name, privacy, expected_members, symbol_str)
         }
 
         FundInstruction::InitUserAccount {  } => {
@@ -113,6 +113,7 @@ fn process_init_fund_account<'a>(
     fund_name: String,
     privacy: u8,
     expected_members: u32,
+    symbol_str: String,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
@@ -123,9 +124,9 @@ fn process_init_fund_account<'a>(
     let token_program_2022_info = next_account_info(accounts_iter)?; // Token Program (2022) .................
     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA Account ...........................
     let creator_wallet_info = next_account_info(accounts_iter)?; // Creator Wallet Address ...................
-    let metadata_account_info = next_account_info(accounts_iter)?; // Metadat PDA for Governance Mint ........
+    // let metadata_account_info = next_account_info(accounts_iter)?; // Metadat PDA for Governance Mint .......................
     let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar .................................
-    let token_metadata_program_info = next_account_info(accounts_iter)?; // Token Metadata Program ...........
+    // let token_metadata_program_info = next_account_info(accounts_iter)?; // Token Metadata Program ..........................
     let user_account_info = next_account_info(accounts_iter)?; // Global User Account ........................
     let proposal_aggregator_info = next_account_info(accounts_iter)?; // first proposal aggregator ...........
     let join_proposal_aggregator_info = next_account_info(accounts_iter)?; // join proposal aggregator .......
@@ -169,11 +170,9 @@ fn process_init_fund_account<'a>(
     let base_mint_space = ExtensionType::try_calculate_account_len::<Mint>(&extensions)?;
     msg!("base mint space = {}", base_mint_space);
     let token_name = fund_name.clone();
-    let token_symbol = String::from("GOV");
+    let token_symbol = String::from(symbol_str.clone());
     let token_uri = "".to_string();
-    // let metadata_tlv_size = 4 + 33 + 32 + 4 + token_name.len() + 4 + token_symbol.len() + 4 + token_uri.len() + 4;
     let mint_space = base_mint_space;
-    //  + metadata_tlv_size + 200;
     let proposal_space = 37 as usize;
     let join_proposal_space = 37 as usize;
 
@@ -217,17 +216,6 @@ fn process_init_fund_account<'a>(
     )?;
     let mint_data_len = governance_mint_info.data_len();
     msg!("Mint account length: {}", mint_data_len);
-    // let mut mint_data = governance_mint_info.data.borrow_mut();
-    // let mut mint 
-    // {
-    //     let mut mint_data = governance_mint_info.try_borrow_mut_data()?;
-    //     let mut mint_state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(mint_data.as_mut())?;
-    //     mint_state.init_extension::<NonTransferable>(false)?;
-    // }
-    // invoke(
-    //     &system_instruction::assign(governance_mint_info.key, token_program_2022_info.key),
-    //     &[governance_mint_info.clone(), token_program_2022_info.clone()]
-    // )?;
 
     invoke_signed(
         &spl_token_2022::instruction::initialize_non_transferable_mint(
@@ -253,7 +241,7 @@ fn process_init_fund_account<'a>(
             governance_mint_info.key,
             fund_account_info.key,
             Some(fund_account_info.key),
-            6,
+            0,
         )?,
         &[
             governance_mint_info.clone(),
@@ -291,54 +279,17 @@ fn process_init_fund_account<'a>(
         &[&[b"join-proposal-aggregator", &[index], fund_pda.as_ref(), &[join_aggregator_bump]]]
     )?;
 
-    // Deriving PDA to store Mint metadata
-    // let (metadata_pda, _bump) = Pubkey::find_program_address(
-    //     &[
-    //         b"metadata",
-    //         TOKEN_METADATA_PROGRAM_ID.as_ref(),
-    //         governance_mint_info.key.as_ref(),
-    //     ],
-    //     &TOKEN_METADATA_PROGRAM_ID,
-    // );
-
-    // Instruction to create Mtadata account at derived PDA
-    // let create_metadata_ix = CreateMetadataAccountV3 {
-    //     metadata: metadata_pda,
-    //     mint: *governance_mint_info.key,
-    //     mint_authority: *fund_account_info.key,
-    //     payer: *creator_wallet_info.key,
-    //     update_authority: (*fund_account_info.key, true),
-    //     system_program: *system_program_info.key,
-    //     rent: None,
-    // }.instruction(CreateMetadataAccountV3InstructionArgs {
-    //     data: DataV2 {
-    //         name: token_name,
-    //         symbol: token_symbol,
-    //         uri: token_uri,
-    //         seller_fee_basis_points: 0,
-    //         creators: None,
-    //         collection: None,
-    //         uses: None,
-    //     },
-    //     is_mutable: true,
-    //     collection_details: None,
-    // });
-
-    // Invoking instruction to create Metadata PDA account
-    // invoke_signed(
-    //     &create_metadata_ix,
-    //     &[
-    //         metadata_account_info.clone(),
-    //         governance_mint_info.clone(),
-    //         fund_account_info.clone(),
-    //         fund_account_info.clone(),
-    //         creator_wallet_info.clone(),
-    //         system_program_info.clone(),
-    //         rent_sysvar_info.clone(),
-    //         token_metadata_program_info.clone(),
-    //     ],
-    //     &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]]
-    // )?;
+    let current_governance_lamports = governance_mint_info.lamports();
+    let new_governance_rent = rent.minimum_balance(322 + fund_name.len() + symbol_str.len());
+    let transfer_amount = new_governance_rent - current_governance_lamports;
+    invoke(
+        &system_instruction::transfer(
+            creator_wallet_info.key,
+            governance_mint_info.key,
+            transfer_amount + 1
+        ),
+        &[creator_wallet_info.clone(), governance_mint_info.clone(), system_program_info.clone()]
+    )?;
 
     invoke_signed(
         &spl_token_metadata_interface::instruction::initialize(
@@ -359,6 +310,8 @@ fn process_init_fund_account<'a>(
         ],
         &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]]
     )?;
+
+    msg!("Size bata jara: {}", governance_mint_info.data_len());
 
     // Converting the fund_name to an array of u8 of fixed size 32
     let bytes = fund_name.as_bytes();
@@ -404,10 +357,6 @@ fn process_init_fund_account<'a>(
             ),
             &[creator_wallet_info.clone(), user_account_info.clone(), system_program_info.clone()],
         )?;
-    }
-
-    if 1 == 1 {
-        return Err(FundError::AlreadyExecuted.into());
     }
 
     // Reallocation for new bytes
@@ -882,6 +831,7 @@ fn process_init_deposit_token(
     let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar Account .................................
     let governance_token_account_info = next_account_info(accounts_iter)?; // Governance Token Account of depositor ..
     let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint Account .........................
+    let token_program_2022_info = next_account_info(accounts_iter)?;
 
     // Depositor should be signer
     if !member_account_info.is_signer {
@@ -895,9 +845,14 @@ fn process_init_deposit_token(
     if *vault_account_info.key != vault_pda || *fund_account_info.key != fund_pda || *user_account_info.key != user_pda {
         return Err(FundError::InvalidAccountData.into());
     }
-    let expected_ata = spl_associated_token_account::get_associated_token_address(
+    // let expected_ata = spl_associated_token_account::get_associated_token_address(
+    //     member_account_info.key,
+    //     governance_mint_info.key,
+    // );
+    let expected_ata = spl_associated_token_account::get_associated_token_address_with_program_id(
         member_account_info.key,
         governance_mint_info.key,
+        token_program_2022_info.key
     );
     if *governance_token_account_info.key != expected_ata {
         return Err(FundError::InvalidTokenAccount.into());
@@ -917,12 +872,12 @@ fn process_init_deposit_token(
                 member_account_info.key,
                 member_account_info.key,
                 governance_mint_info.key,
-                token_program_info.key,
+                token_program_2022_info.key,
             ),
             &[
                 member_account_info.clone(),
                 governance_token_account_info.clone(),
-                token_program_info.clone(),
+                token_program_2022_info.clone(),
                 governance_mint_info.clone(),
                 rent_sysvar_info.clone(),
             ]
@@ -1049,8 +1004,8 @@ fn process_init_deposit_token(
 
     // Now mint equivalent quantity of governance tokens to the depositor's governance token account
     invoke_signed(
-        &spl_token::instruction::mint_to(
-            token_program_info.key,
+        &spl_token_2022::instruction::mint_to(
+            token_program_2022_info.key,
             governance_mint_info.key,
             governance_token_account_info.key,
             fund_account_info.key,
@@ -1061,7 +1016,7 @@ fn process_init_deposit_token(
             governance_mint_info.clone(),
             governance_token_account_info.clone(),
             fund_account_info.clone(),
-            token_program_info.clone(),
+            token_program_2022_info.clone(),
         ],
         &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
     )?;

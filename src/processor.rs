@@ -9,16 +9,23 @@ use solana_program::{
 use spl_token::state::Account as TokenAccount;
 use spl_associated_token_account::instruction::create_associated_token_account;
 use spl_token_2022::instruction::initialize_mint2;
-use spl_token_2022::extension::ExtensionType;
+use spl_token_2022::extension::{
+    ExtensionType,
+    metadata_pointer,
+    // non_transferable,
+};
+use spl_token_metadata_interface;
+// , StateWithExtensionsMut, non_transferable::NonTransferable
 use spl_token_2022::state::Mint;
+// use spl_token_metadata_interface::state::TokenMetadata;
 use crate::state::{JoinProposal, JoinProposalAggregator, JoinVoteAccount, UserSpecific};
 use crate::{
     errors::FundError,
     instruction::FundInstruction,
     state::{FundAccount, Proposal, ProposalAggregatorAccount, UserAccount, VaultAccount, VoteAccount}
 };
-use mpl_token_metadata::types::DataV2;
-use mpl_token_metadata::instructions::{CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs};
+// use mpl_token_metadata::types::{DataV2, TokenStandard};
+// use mpl_token_metadata::instructions::{CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs};
 
 pub const TOKEN_METADATA_PROGRAM_ID: Pubkey = pubkey!("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 
@@ -113,7 +120,7 @@ fn process_init_fund_account<'a>(
     let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint .........................
     let vault_account_info = next_account_info(accounts_iter)?; // Vault PDA Account .........................
     let system_program_info = next_account_info(accounts_iter)?; // System Program ...........................
-    // let token_program_info = next_account_info(accounts_iter)?; // Token Program (2020) ......................
+    let token_program_2022_info = next_account_info(accounts_iter)?; // Token Program (2022) .................
     let fund_account_info = next_account_info(accounts_iter)?; // Fund PDA Account ...........................
     let creator_wallet_info = next_account_info(accounts_iter)?; // Creator Wallet Address ...................
     let metadata_account_info = next_account_info(accounts_iter)?; // Metadat PDA for Governance Mint ........
@@ -158,9 +165,15 @@ fn process_init_fund_account<'a>(
     let rent = &Rent::from_account_info(rent_sysvar_info)?;
     let fund_space = 150 as usize;
     let vault_space = 40 as usize;
-    let extensions = vec![ExtensionType::NonTransferable];
-    // let mint_space = spl_token::state::Mint::LEN;
-    let mint_space = ExtensionType::try_calculate_account_len::<Mint>(&extensions)?;
+    let extensions = vec![ExtensionType::NonTransferable, ExtensionType::MetadataPointer];
+    let base_mint_space = ExtensionType::try_calculate_account_len::<Mint>(&extensions)?;
+    msg!("base mint space = {}", base_mint_space);
+    let token_name = fund_name.clone();
+    let token_symbol = String::from("GOV");
+    let token_uri = "".to_string();
+    // let metadata_tlv_size = 4 + 33 + 32 + 4 + token_name.len() + 4 + token_symbol.len() + 4 + token_uri.len() + 4;
+    let mint_space = base_mint_space;
+    //  + metadata_tlv_size + 200;
     let proposal_space = 37 as usize;
     let join_proposal_space = 37 as usize;
 
@@ -197,22 +210,60 @@ fn process_init_fund_account<'a>(
             governance_mint_info.key,
             rent.minimum_balance(mint_space),
             mint_space as u64,
-            &spl_token_2022::id(),
+            token_program_2022_info.key,
         ),
-        &[creator_wallet_info.clone(), governance_mint_info.clone(), system_program_info.clone()],
+        &[creator_wallet_info.clone(), governance_mint_info.clone(), system_program_info.clone(), token_program_2022_info.clone()],
+        &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]],
+    )?;
+    let mint_data_len = governance_mint_info.data_len();
+    msg!("Mint account length: {}", mint_data_len);
+    // let mut mint_data = governance_mint_info.data.borrow_mut();
+    // let mut mint 
+    // {
+    //     let mut mint_data = governance_mint_info.try_borrow_mut_data()?;
+    //     let mut mint_state = StateWithExtensionsMut::<Mint>::unpack_uninitialized(mint_data.as_mut())?;
+    //     mint_state.init_extension::<NonTransferable>(false)?;
+    // }
+    // invoke(
+    //     &system_instruction::assign(governance_mint_info.key, token_program_2022_info.key),
+    //     &[governance_mint_info.clone(), token_program_2022_info.clone()]
+    // )?;
+
+    invoke_signed(
+        &spl_token_2022::instruction::initialize_non_transferable_mint(
+            &spl_token_2022::id(),
+            governance_mint_info.key,
+        )?,
+        &[governance_mint_info.clone(), token_program_2022_info.clone()],
+        &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]]
+    )?;
+    invoke_signed(
+        &metadata_pointer::instruction::initialize(
+            &spl_token_2022::id(),
+            governance_mint_info.key,
+            Some(*fund_account_info.key),
+            Some(*governance_mint_info.key),
+        )?,
+        &[governance_mint_info.clone(), rent_sysvar_info.clone(), token_program_2022_info.clone()],
         &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]],
     )?;
     invoke_signed(
-        &initialize_mint2(
+        &spl_token_2022::instruction::initialize_mint2(
             &spl_token_2022::id(),
             governance_mint_info.key,
             fund_account_info.key,
-            None,
-            0,
+            Some(fund_account_info.key),
+            6,
         )?,
-        &[governance_mint_info.clone(), rent_sysvar_info.clone()],
+        &[
+            governance_mint_info.clone(),
+            rent_sysvar_info.clone(),
+            // token_program_2022_info.clone(),
+            // fund_account_info.clone()
+        ],
         &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]],
     )?;
+
 
     // creating the proposal aggregator account
     invoke_signed(
@@ -241,55 +292,70 @@ fn process_init_fund_account<'a>(
     )?;
 
     // Deriving PDA to store Mint metadata
-    let (metadata_pda, _bump) = Pubkey::find_program_address(
-        &[
-            b"metadata",
-            TOKEN_METADATA_PROGRAM_ID.as_ref(),
-            governance_mint_info.key.as_ref(),
-        ],
-        &TOKEN_METADATA_PROGRAM_ID,
-    );
-
-    // Token metadata
-    let token_name = fund_name.clone();
-    let token_symbol = String::from("GOV");
-    let token_uri = "".to_string();
+    // let (metadata_pda, _bump) = Pubkey::find_program_address(
+    //     &[
+    //         b"metadata",
+    //         TOKEN_METADATA_PROGRAM_ID.as_ref(),
+    //         governance_mint_info.key.as_ref(),
+    //     ],
+    //     &TOKEN_METADATA_PROGRAM_ID,
+    // );
 
     // Instruction to create Mtadata account at derived PDA
-    let create_metadata_ix = CreateMetadataAccountV3 {
-        metadata: metadata_pda,
-        mint: *governance_mint_info.key,
-        mint_authority: *fund_account_info.key,
-        payer: *creator_wallet_info.key,
-        update_authority: (*fund_account_info.key, true),
-        system_program: *system_program_info.key,
-        rent: None,
-    }.instruction(CreateMetadataAccountV3InstructionArgs {
-        data: DataV2 {
-            name: token_name,
-            symbol: token_symbol,
-            uri: token_uri,
-            seller_fee_basis_points: 0,
-            creators: None,
-            collection: None,
-            uses: None,
-        },
-        is_mutable: true,
-        collection_details: None,
-    });
+    // let create_metadata_ix = CreateMetadataAccountV3 {
+    //     metadata: metadata_pda,
+    //     mint: *governance_mint_info.key,
+    //     mint_authority: *fund_account_info.key,
+    //     payer: *creator_wallet_info.key,
+    //     update_authority: (*fund_account_info.key, true),
+    //     system_program: *system_program_info.key,
+    //     rent: None,
+    // }.instruction(CreateMetadataAccountV3InstructionArgs {
+    //     data: DataV2 {
+    //         name: token_name,
+    //         symbol: token_symbol,
+    //         uri: token_uri,
+    //         seller_fee_basis_points: 0,
+    //         creators: None,
+    //         collection: None,
+    //         uses: None,
+    //     },
+    //     is_mutable: true,
+    //     collection_details: None,
+    // });
 
     // Invoking instruction to create Metadata PDA account
+    // invoke_signed(
+    //     &create_metadata_ix,
+    //     &[
+    //         metadata_account_info.clone(),
+    //         governance_mint_info.clone(),
+    //         fund_account_info.clone(),
+    //         fund_account_info.clone(),
+    //         creator_wallet_info.clone(),
+    //         system_program_info.clone(),
+    //         rent_sysvar_info.clone(),
+    //         token_metadata_program_info.clone(),
+    //     ],
+    //     &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]]
+    // )?;
+
     invoke_signed(
-        &create_metadata_ix,
+        &spl_token_metadata_interface::instruction::initialize(
+            &spl_token_2022::id(),
+            governance_mint_info.key,
+            fund_account_info.key,
+            governance_mint_info.key,
+            fund_account_info.key,
+            token_name,
+            token_symbol,
+            token_uri
+        ),
         &[
-            metadata_account_info.clone(),
             governance_mint_info.clone(),
             fund_account_info.clone(),
             fund_account_info.clone(),
-            creator_wallet_info.clone(),
-            system_program_info.clone(),
-            rent_sysvar_info.clone(),
-            token_metadata_program_info.clone(),
+            token_program_2022_info.clone()
         ],
         &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]]
     )?;
@@ -338,6 +404,10 @@ fn process_init_fund_account<'a>(
             ),
             &[creator_wallet_info.clone(), user_account_info.clone(), system_program_info.clone()],
         )?;
+    }
+
+    if 1 == 1 {
+        return Err(FundError::AlreadyExecuted.into());
     }
 
     // Reallocation for new bytes

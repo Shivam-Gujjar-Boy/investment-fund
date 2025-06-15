@@ -21,6 +21,7 @@ pub enum FundError {
     NotEnoughVotes,
     AlreadyExecuted,
     InvalidFundCreator,
+    AlreadyAppliedForEntry,
 }
 
 impl From<FundError> for ProgramError {

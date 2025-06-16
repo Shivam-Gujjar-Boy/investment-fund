@@ -22,6 +22,7 @@ pub enum FundError {
     AlreadyExecuted,
     InvalidFundCreator,
     AlreadyAppliedForEntry,
+    AlreadyMember,
 }
 
 impl From<FundError> for ProgramError {

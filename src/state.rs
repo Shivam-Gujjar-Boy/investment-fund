@@ -31,7 +31,8 @@ pub struct UserAccount {
 pub struct UserSpecific {
     pub fund: Pubkey,
     pub governance_token_balance: u64,
-    pub num_proposals: u16,
+    pub is_pending: bool,
+    pub is_eligible: bool,
     pub join_time: i64
 }
 

@@ -32,7 +32,7 @@ pub enum FundInstruction {
     JoinVote {
         vote: u8,
         fund_name: String,
-        vec_index: u8,
+        proposal_index: u8,
     },
 
     AddFundMember {
@@ -207,12 +207,12 @@ impl FundInstruction {
             }
             11 => {
                 let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (&vec_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::JoinVote {
                     vote,
                     fund_name,
-                    vec_index
+                    proposal_index
                 }
             }
             _ => {

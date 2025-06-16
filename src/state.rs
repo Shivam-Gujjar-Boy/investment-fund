@@ -70,7 +70,7 @@ pub struct JoinProposal {
     pub votes_yes: u64,
     pub votes_no: u64,
     pub creation_time: i64,
-    pub executed: bool
+    pub proposal_index: u8
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
@@ -82,6 +82,6 @@ pub struct VoteAccount {
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct JoinVoteAccount {
-    pub vec_index: u8,
+    pub proposal_index: u8,
     pub voters: Vec<(Pubkey, u8)>
 }

@@ -77,6 +77,12 @@ pub enum FundInstruction {
         proposal_index: u8,
     },
 
+    // tag = 12
+    CancelJoinProposal {
+        fund_name: String,
+        proposal_index: u8,
+    }
+
 }
 
 impl FundInstruction {
@@ -187,6 +193,11 @@ impl FundInstruction {
                     fund_name,
                     proposal_index
                 }
+            }
+            12 => {
+                let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                Self::CancelJoinProposal { fund_name, proposal_index }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

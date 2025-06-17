@@ -86,6 +86,11 @@ pub fn process_instruction<'a>(
             process_vote_on_join_proposal(program_id, accounts, vote, fund_name, proposal_index)
         }
 
+        FundInstruction::CancelJoinProposal { fund_name, proposal_index } => {
+            msg!("Instruction: Cancel Join Proposal");
+            process_cancel_join_proposal(program_id, accounts, fund_name, proposal_index)
+        }
+
         _ => Err(FundError::InvalidInstruction.into()),
     }
 }
@@ -387,6 +392,7 @@ fn process_init_fund_account<'a>(
 
     Ok(())
 }
+
 
 fn process_init_user_account(
     program_id: &Pubkey,
@@ -743,6 +749,120 @@ fn process_vote_on_join_proposal(
 
     Ok(())
 }
+
+
+fn process_cancel_join_proposal(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    fund_name: String,
+    proposal_index: u8,
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let joiner_account_info = next_account_info(accounts_iter)?;
+    let joiner_pda_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?;
+    let join_proposal_aggregator_info = next_account_info(accounts_iter)?;
+    let vote_account_info = next_account_info(accounts_iter)?;
+    let rent_reserve_info = next_account_info(accounts_iter)?;
+
+    if !joiner_account_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (joiner_pda, _joiner_bump) = Pubkey::find_program_address(&[b"user", joiner_account_info.key.as_ref()], program_id);
+    let index = 0 as u8;
+    let (join_aggregator_pda, _join_aggregator_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_account_info.key.as_ref()], program_id);
+    let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_account_info.key.as_ref()], program_id);
+    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
+
+    if *fund_account_info.key != fund_pda ||
+       *joiner_pda_info.key != joiner_pda ||
+       *join_proposal_aggregator_info.key != join_aggregator_pda ||
+       *vote_account_info.key != vote_pda ||
+       *rent_reserve_info.key != rent_pda {
+        return Err(FundError::InvalidAccountData.into());
+       }
+
+    let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+    if fund_data.is_private == 0 {
+        return Err(FundError::InvalidFundDetails.into());
+    }
+
+    let is_joiner_member = fund_data
+       .members
+       .iter()
+       .any(|member| *member == *joiner_account_info.key);
+
+    if is_joiner_member {
+        return Err(FundError::AlreadyMember.into());
+    }
+
+    let mut joiner_data = UserAccount::try_from_slice(&joiner_pda_info.data.borrow())?;
+    let user_specific = joiner_data
+        .funds
+        .iter()
+        .find(|user_specific| user_specific.fund == *fund_account_info.key)
+        .ok_or(FundError::InvalidAccountData)?;
+
+    if !user_specific.is_pending {
+        return Err(FundError::AlreadyMember.into());
+    }
+
+    let mut join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
+    let (_matched_index, proposal) = join_proposal_data
+        .join_proposals
+        .iter()
+        .enumerate()
+        .find(|(_, proposal)| proposal.proposal_index == proposal_index)
+        .ok_or(FundError::InvalidAccountData)?;
+
+    if proposal.joiner != *joiner_account_info.key {
+        return Err(FundError::InvalidProposerInfo.into());
+    }
+
+    join_proposal_data.join_proposals.retain(|proposal| proposal.proposal_index != proposal_index);
+
+    let rent = Rent::get()?;
+    let current_aggregator_size = join_proposal_aggregator_info.data_len();
+    let new_aggregator_size = current_aggregator_size - 57;
+    let current_aggregator_rent = join_proposal_aggregator_info.lamports();
+    let new_aggregator_rent = rent.minimum_balance(new_aggregator_size);
+
+    join_proposal_aggregator_info.realloc(new_aggregator_size, false)?;
+
+    if new_aggregator_rent < current_aggregator_rent {
+        **join_proposal_aggregator_info.lamports.borrow_mut() -= current_aggregator_rent - new_aggregator_rent;
+        **joiner_account_info.lamports.borrow_mut() += current_aggregator_rent - new_aggregator_rent;
+    }
+
+    join_proposal_data.serialize(&mut &mut join_proposal_aggregator_info.data.borrow_mut()[..])?;
+
+    // Delete Vote account
+    let lamports = vote_account_info.lamports();
+    **rent_reserve_info.lamports.borrow_mut() += lamports;
+    **vote_account_info.lamports.borrow_mut() -= lamports;
+
+    // remove fund data from joiner pda
+    joiner_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
+    let current_joiner_size = joiner_pda_info.data_len();
+    let new_joiner_size = current_joiner_size - 50;
+    let current_joiner_rent = joiner_pda_info.lamports();
+    let new_joiner_rent = rent.minimum_balance(new_joiner_size);
+
+    joiner_pda_info.realloc(new_joiner_size, false)?;
+
+    if new_joiner_rent < current_joiner_rent {
+        **joiner_pda_info.lamports.borrow_mut() -= current_joiner_rent - new_joiner_rent;
+        **joiner_account_info.lamports.borrow_mut() += current_joiner_rent - new_joiner_rent;
+    }
+
+    joiner_data.serialize(&mut &mut joiner_pda_info.data.borrow_mut()[..])?;
+    
+
+    Ok(())
+}
+
 
 fn process_add_member<'a>(
     program_id: &Pubkey,

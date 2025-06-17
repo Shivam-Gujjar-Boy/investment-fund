@@ -23,6 +23,8 @@ pub enum FundError {
     InvalidFundCreator,
     AlreadyAppliedForEntry,
     AlreadyMember,
+    NoVotingPower,
+    NotAFundMember,
 }
 
 impl From<FundError> for ProgramError {

@@ -1,5 +1,5 @@
 use solana_program::{
-    program_error::ProgramError, pubkey::Pubkey
+    program_error::ProgramError
 };
 use crate::errors::FundError;
 use borsh::{BorshSerialize, BorshDeserialize};
@@ -8,14 +8,7 @@ const BYTE_SIZE_8: usize = 8;
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub enum FundInstruction {
-
-    // 1. Governance Mint Account
-    // 2. Vault Account
-    // 3. Fund Account
-    // 4. System Program
-    // 5. Token Program
-    // 6. Rent Account
-    // 7. [..] Array of Fund Members
+    // tag = 0
     InitFundAccount { 
         privacy: u8,
         expected_members: u32,
@@ -23,87 +16,67 @@ pub enum FundInstruction {
         fund_name: String,
     },
 
-    InitUserAccount { },
-
-    InitJoinProposal {
-        fund_name: String,
-    },
-
-    JoinVote {
-        vote: u8,
-        fund_name: String,
-        proposal_index: u8,
-    },
-
-    AddFundMember {
-        fund_name: String,
-        vec_index: u8,
-    },
-
-    // 1. Governance Mint Account
-    // 2. Vault Account
-    // 3. Fund Account
-    // 4. System Program
-    // 5. Token Program
-    // 6. Member's Governance Token Account
-    // 7. Member's Wallet
-    // 8. User-specific PDA
-
-    InitDepositToken {
-        amount: u64,
-        mint_amount: u64,
-        fund_name: String,
-    },
-
-    // Proposals can be of the following types:
-    // 1. Investment -> tag 0
-    // 2. Addition of New Member -> tag 1
-    // 3. Removal of any member -> tag 2
-    // 4. Withdrawl -> tag 3
-
-    // 1. Proposer Account
-    // 2. [..] From Assets Mints
-    // 3. [..] To Assets Mints
+    // tag = 1
     InitProposalInvestment {
         amounts: Vec<u64>,
         slippage: Vec<u16>,
-        // dex_tags: Vec<u8>,
         deadline: i64,
         fund_name: String,
     },
-
-    // 1. Voter Account
-    // 2. Vote Account
-    // 3. Proposal Account
-    // 4. System Program
-    // 5. User PDA Account
-    // 6. Fund Account
-    // 7. Governance Mint Account
-    // 8. Voter Governance Token Account
+    
+    // tag = 2
     Vote {
         vote: u8,
         proposal_index: u8,
         vec_index: u8,
         fund_name: String,
     },
+    
+    // tag = 3
+    AddFundMember {
+        fund_name: String,
+        vec_index: u8,
+    },
 
-    DeleteFund {},
-
-    InitRentAccount { },
-
-    // 1. Proposal Account
-    // 2. Fund Account
-    // 3. Vault Account
-    // 4. System Program
-    // 5. Token Program
+    // tag = 4
     ExecuteProposalInvestment {
         swap_number: u8,
         fund_name: String,
         proposal_index: u8,
         vec_index: u8
     },
-    Execute { proposal: Pubkey },
+
+    // tag = 5
+    InitRentAccount { },
+
+    // tag = 6
+    InitUserAccount { },
+
+    // tag = 7
+    InitDepositToken {
+        amount: u64,
+        mint_amount: u64,
+        fund_name: String,
+    },
+
+    // tag = 8
+    DeleteFund {},
+
+    // tag = 9
     LeaveFund{fund_name: String },
+
+    // tag = 10
+    InitJoinProposal {
+        fund_name: String,
+    },
+
+    // tag = 11
+    JoinVote {
+        vote: u8,
+        fund_name: String,
+        proposal_index: u8,
+    },
+
 }
 
 impl FundInstruction {

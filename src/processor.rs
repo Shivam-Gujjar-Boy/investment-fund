@@ -752,7 +752,7 @@ fn process_add_member<'a>(
     program_id: &Pubkey,
     accounts: &'a [AccountInfo<'a>],
     fund_name: String,
-    vec_index: u8,
+    proposal_index: u8,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
@@ -792,64 +792,7 @@ fn process_add_member<'a>(
     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     let total_voting_power = fund_data.total_deposit;
 
-    // If fund is private
-    if fund_data.is_private == 1 as u8 {
-        let join_proposal_aggregator_info = next_account_info(accounts_iter)?;
-        let vote_account_info = next_account_info(accounts_iter)?;
-        let index = 0 as u8;
-        let (join_proposal_pda, _join_proposal_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_pda.as_ref()], program_id);
-        let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[vec_index], fund_pda.as_ref()], program_id);
-        if *join_proposal_aggregator_info.key != join_proposal_pda {
-            return Err(FundError::InvalidProposalAccount.into());
-        }
-        if *vote_account_info.key != vote_pda {
-            return Err(FundError::InvalidVoteAccount.into());
-        }
 
-        let mut join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
-
-        if 2*(join_proposal_data.join_proposals[vec_index as usize].votes_yes) < total_voting_power {
-            return Err(FundError::NotEnoughVotes.into());
-        }
-
-        join_proposal_data.join_proposals.retain(|proposal| proposal.joiner != *member_account_info.key);
-
-        let rent = Rent::get()?;
-        let current_proposal_aggregator_size = join_proposal_aggregator_info.data_len();
-        let new_proposal_aggregator_size = current_proposal_aggregator_size - 57;
-        let current_aggregator_rent = join_proposal_aggregator_info.lamports();
-        let new_aggregator_rent = rent.minimum_balance(new_proposal_aggregator_size);
-
-        join_proposal_aggregator_info.realloc(new_proposal_aggregator_size, true)?;
-        if new_aggregator_rent < current_aggregator_rent {
-            **join_proposal_aggregator_info.lamports.borrow_mut() -= new_aggregator_rent - current_aggregator_rent;
-            **member_account_info.lamports.borrow_mut() += new_aggregator_rent - current_aggregator_rent;
-        }
-
-        join_proposal_data.serialize(&mut &mut join_proposal_aggregator_info.data.borrow_mut()[..])?;
-
-        let lamports = vote_account_info.lamports();
-        **rent_reserve_info.lamports.borrow_mut() += lamports;
-        **vote_account_info.lamports.borrow_mut() = 0;
-
-        let mut data = vote_account_info.data.borrow_mut();
-        for byte in data.iter_mut() {
-            *byte = 0;
-        }
-
-        if let Some(user_specific) = user_data
-            .funds
-            .iter_mut()
-            .find(|entry| entry.fund == *fund_account_info.key) {
-                user_specific.is_pending = false;
-                user_specific.is_eligible = true;
-            } else {
-                msg!("User is not a member in this fund");
-                return Err(FundError::InvalidAccountData.into());
-            }
-
-        user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
-    }
 
     let rent = Rent::get()?;
 
@@ -908,10 +851,8 @@ fn process_add_member<'a>(
 
     // Reallocate new bytes for storage of new member pubkey
     fund_account_info.realloc(fund_new_size, false)?;
-    let mut fund_data_2 = fund_account_info.data.borrow_mut();
-    msg!("raw fund data after reallocation: {:?}", fund_data_2);
     fund_data.members.push(*member_account_info.key);
-    fund_data.serialize(&mut &mut fund_data_2[..])?;
+    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
     // Refund logic
     if fund_data.expected_members >= fund_data.members.len() as u32 {
@@ -924,6 +865,77 @@ fn process_add_member<'a>(
             ),
             &[member_account_info.clone(), rent_reserve_info.clone(), system_program_info.clone()]
         )?;
+    }
+
+    // If fund is private
+    if fund_data.is_private == 1 as u8 {
+        let join_proposal_aggregator_info = next_account_info(accounts_iter)?;
+        let vote_account_info = next_account_info(accounts_iter)?;
+        let index = 0 as u8;
+        let (join_proposal_pda, _join_proposal_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_pda.as_ref()], program_id);
+        let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_pda.as_ref()], program_id);
+        if *join_proposal_aggregator_info.key != join_proposal_pda {
+            return Err(FundError::InvalidProposalAccount.into());
+        }
+        if *vote_account_info.key != vote_pda {
+            return Err(FundError::InvalidVoteAccount.into());
+        }
+
+        let mut join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
+        let (_matched_index, proposal) = join_proposal_data
+            .join_proposals
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.proposal_index == proposal_index)
+            .ok_or(FundError::InvalidAccountData)?;
+
+        if proposal.joiner != *member_account_info.key {
+            return Err(FundError::InvalidAccountData.into());
+        }
+
+        if 2*(proposal.votes_yes) < total_voting_power {
+            return Err(FundError::NotEnoughVotes.into());
+        }
+
+        join_proposal_data.join_proposals.retain(|proposal| proposal.proposal_index != proposal_index);
+
+        let rent = Rent::get()?;
+        let current_proposal_aggregator_size = join_proposal_aggregator_info.data_len();
+        msg!("Aggregator current size: {}", current_proposal_aggregator_size);
+        let new_proposal_aggregator_size = current_proposal_aggregator_size - 57;
+        msg!("New Aggregator size: {}", new_proposal_aggregator_size);
+        let current_aggregator_rent = join_proposal_aggregator_info.lamports();
+        let new_aggregator_rent = rent.minimum_balance(new_proposal_aggregator_size);
+
+        join_proposal_aggregator_info.realloc(new_proposal_aggregator_size, false)?;
+        if new_aggregator_rent < current_aggregator_rent {
+            **join_proposal_aggregator_info.lamports.borrow_mut() -= current_aggregator_rent - new_aggregator_rent;
+            **member_account_info.lamports.borrow_mut() += current_aggregator_rent - new_aggregator_rent;
+        }
+
+        join_proposal_data.serialize(&mut &mut join_proposal_aggregator_info.data.borrow_mut()[..])?;
+
+        let lamports = vote_account_info.lamports();
+        **rent_reserve_info.lamports.borrow_mut() += lamports;
+        **vote_account_info.lamports.borrow_mut() -= lamports;
+
+        let mut data = vote_account_info.data.borrow_mut();
+        for byte in data.iter_mut() {
+            *byte = 0;
+        }
+
+        if let Some(user_specific) = user_data
+            .funds
+            .iter_mut()
+            .find(|entry| entry.fund == *fund_account_info.key) {
+                user_specific.is_pending = false;
+                user_specific.is_eligible = true;
+            } else {
+                msg!("User is not a member in this fund");
+                return Err(FundError::InvalidAccountData.into());
+            }
+
+        user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
     }
 
     // If expected number of members are achieved, refund back to creator

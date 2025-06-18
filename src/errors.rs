@@ -25,6 +25,7 @@ pub enum FundError {
     AlreadyMember,
     NoVotingPower,
     NotAFundMember,
+    DeadlineReached,
 }
 
 impl From<FundError> for ProgramError {

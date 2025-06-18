@@ -49,12 +49,13 @@ pub struct Proposal {
     pub from_assets: Vec<Pubkey>,
     pub to_assets: Vec<Pubkey>,
     pub amounts: Vec<u64>,
-    pub slippage: Vec<u16>,
+    pub slippages: Vec<u16>,
     pub votes_yes: u64,
     pub votes_no: u64,
     pub creation_time: i64,
     pub deadline: i64,
     pub executed: bool,
+    pub vec_index: u16,
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -76,7 +77,7 @@ pub struct JoinProposal {
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct VoteAccount {
     pub proposal_index: u8,
-    pub vec_index: u8,
+    pub vec_index: u16,
     pub voters: Vec<(Pubkey, u8)>
 }
 

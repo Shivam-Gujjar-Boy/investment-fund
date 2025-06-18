@@ -28,7 +28,7 @@ pub enum FundInstruction {
     Vote {
         vote: u8,
         proposal_index: u8,
-        vec_index: u8,
+        vec_index: u16,
         fund_name: String,
     },
     
@@ -81,6 +81,13 @@ pub enum FundInstruction {
     CancelJoinProposal {
         fund_name: String,
         proposal_index: u8,
+    },
+
+    // tag = 13
+    CancelInvestmentProposal {
+        fund_name: String,
+        proposal_index: u8,
+        vec_index: u16,
     }
 
 }
@@ -127,8 +134,9 @@ impl FundInstruction {
             2 => {
                 let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (&vec_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (vec_index_bytes, rest) = rest.split_at(2 as usize);
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                let vec_index = u16::from_le_bytes(vec_index_bytes.try_into().expect("Wrong Vec Index"));
                 Self::Vote {
                     vote,
                     proposal_index,
@@ -198,6 +206,14 @@ impl FundInstruction {
                 let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::CancelJoinProposal { fund_name, proposal_index }
+            }
+            13 => {
+                let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (vec_index_bytes, rest) = rest.split_at(2 as usize);
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                let vec_index = u16::from_le_bytes(vec_index_bytes.try_into().expect("Invalid Vec Index"));
+
+                Self::CancelInvestmentProposal { fund_name, proposal_index, vec_index }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

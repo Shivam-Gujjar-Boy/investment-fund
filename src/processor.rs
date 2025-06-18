@@ -91,6 +91,11 @@ pub fn process_instruction<'a>(
             process_cancel_join_proposal(program_id, accounts, fund_name, proposal_index)
         }
 
+        FundInstruction::CancelInvestmentProposal { fund_name, proposal_index, vec_index } => {
+            msg!("Instruction: Cancel Investment Proposal");
+            process_cancel_investment_proposal(program_id, accounts, fund_name, proposal_index, vec_index)
+        }
+
         _ => Err(FundError::InvalidInstruction.into()),
     }
 }
@@ -758,12 +763,12 @@ fn process_cancel_join_proposal(
     proposal_index: u8,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
-    let joiner_account_info = next_account_info(accounts_iter)?;
-    let joiner_pda_info = next_account_info(accounts_iter)?;
-    let fund_account_info = next_account_info(accounts_iter)?;
-    let join_proposal_aggregator_info = next_account_info(accounts_iter)?;
-    let vote_account_info = next_account_info(accounts_iter)?;
-    let rent_reserve_info = next_account_info(accounts_iter)?;
+    let joiner_account_info = next_account_info(accounts_iter)?; //  joiner wallet ...........................
+    let joiner_pda_info = next_account_info(accounts_iter)?; // joiner global pda ............................
+    let fund_account_info = next_account_info(accounts_iter)?; // fund account ...............................
+    let join_proposal_aggregator_info = next_account_info(accounts_iter)?; // join proposal aggregator .......
+    let vote_account_info = next_account_info(accounts_iter)?; // vote account ...............................
+    let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ...............................
 
     if !joiner_account_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
@@ -842,6 +847,11 @@ fn process_cancel_join_proposal(
     let lamports = vote_account_info.lamports();
     **rent_reserve_info.lamports.borrow_mut() += lamports;
     **vote_account_info.lamports.borrow_mut() -= lamports;
+
+    let mut data = vote_account_info.data.borrow_mut();
+    for byte in data.iter_mut() {
+        *byte = 0;
+    }
 
     // remove fund data from joiner pda
     joiner_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
@@ -1323,7 +1333,7 @@ fn process_init_investment_proposal(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     amounts: Vec<u64>,
-    slippage: Vec<u16>,
+    slippages: Vec<u16>,
     deadline: i64,
     fund_name: String,
 ) -> ProgramResult {
@@ -1335,8 +1345,8 @@ fn process_init_investment_proposal(
     let proposal_aggregator_info = next_account_info(accounts_iter)?; // Proposal Account ........................
     let system_program_info = next_account_info(accounts_iter)?; // System Program ...............................
     let new_proposal_aggregator_info = next_account_info(accounts_iter)?; // new proposal aggregator account .....
-    let vote_account_a_info = next_account_info(accounts_iter)?; // vote account 1 ...............................
-    let vote_account_b_info = next_account_info(accounts_iter)?; // vote account 2 ...............................
+    let vote_account_info = next_account_info(accounts_iter)?; // vote account 1 .................................
+    let new_vote_account_info = next_account_info(accounts_iter)?; // vote account 2 .............................
 
     // Proposer needs to be signer
     if !proposer_account_info.is_signer {
@@ -1362,7 +1372,7 @@ fn process_init_investment_proposal(
         return Err(FundError::InvalidAccountData.into());
     }
 
-    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(
+    let (proposal_aggregator_pda, _proposal_aggregator_bump) = Pubkey::find_program_address(
         &[
             b"proposal-aggregator",
             &[current_index],
@@ -1371,7 +1381,7 @@ fn process_init_investment_proposal(
         program_id
     );
 
-    let (new_proposal_pda, new_proposal_bump) = Pubkey::find_program_address(
+    let (new_proposal_aggregator_pda, new_proposal_aggregator_bump) = Pubkey::find_program_address(
         &[
             b"proposal-aggregator",
             &[current_index + 1],
@@ -1380,7 +1390,7 @@ fn process_init_investment_proposal(
         program_id
     );
 
-    if *proposal_aggregator_info.key != proposal_pda || *new_proposal_aggregator_info.key != new_proposal_pda {
+    if *proposal_aggregator_info.key != proposal_aggregator_pda || *new_proposal_aggregator_info.key != new_proposal_aggregator_pda {
         msg!("Proposal pds are invalid");
         return Err(FundError::InvalidProposalAccount.into());
     }
@@ -1405,10 +1415,8 @@ fn process_init_investment_proposal(
 
     // Rent Calculation
     let rent = Rent::get()?;
-    let extra_proposal_space = (81 + to_assets_info.len()*74) as usize;
+    let extra_proposal_space = (83 + to_assets_info.len()*74) as usize;
     let current_proposal_space = proposal_aggregator_info.data_len();
-
-    let mut flag = false;
 
     let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
 
@@ -1432,7 +1440,7 @@ fn process_init_investment_proposal(
                 b"proposal-aggregator",
                 &[current_index + 1],
                 fund_account_info.key.as_ref(),
-                &[new_proposal_bump]
+                &[new_proposal_aggregator_bump]
             ]]
         )?;
 
@@ -1441,12 +1449,13 @@ fn process_init_investment_proposal(
             from_assets: from_assets_mints,
             to_assets: to_assets_mints,
             amounts,
-            slippage,
+            slippages,
             votes_yes: 0 as u64,
             votes_no: 0 as u64,
             creation_time,
             deadline,
-            executed: false
+            executed: false,
+            vec_index: 0 as u16
         }];
 
         let new_proposal_data = ProposalAggregatorAccount {
@@ -1459,7 +1468,42 @@ fn process_init_investment_proposal(
 
         fund_data.current_proposal_index += 1;
         fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
-        flag = true;
+        
+        let new_vec_index = 0 as u16;
+        let (new_vote_pda, new_vote_bump) = Pubkey::find_program_address(&[b"vote", &[current_index + 1], &new_vec_index.to_le_bytes(), fund_account_info.key.as_ref()], program_id);
+        if *new_vote_account_info.key != new_vote_pda {
+            return Err(FundError::InvalidVoteAccount.into());
+        }
+        if !new_vote_account_info.data_is_empty() {
+            msg!("Wrong Vote Account");
+            return Err(FundError::InvalidVoteAccount.into());
+        }
+
+        let vote_space = 6 as usize;
+        let vote_rent = rent.minimum_balance(vote_space);
+
+        invoke_signed(
+            &system_instruction::create_account(
+                proposer_account_info.key,
+                new_vote_account_info.key,
+                vote_rent,
+                vote_space as u64,
+                program_id
+            ),
+            &[proposer_account_info.clone(), new_vote_account_info.clone(), system_program_info.clone()],
+            &[&[b"vote", &[current_index + 1], &new_vec_index.to_le_bytes(), &[new_vote_bump]]]
+        )?;
+
+        let new_voters_vec: Vec<(Pubkey, u8)> = vec![];
+        let new_vote_data = VoteAccount {
+            proposal_index: current_index + 1,
+            vec_index: new_vec_index,
+            voters: new_voters_vec
+        };
+
+        new_vote_data.serialize(&mut &mut new_vote_account_info.data.borrow_mut()[..])?;
+
+        msg!("[FUND-ACTIVITY] {} {} {} Proposal created: ({}, {}) by {}", fund_account_info.key.to_string(), creation_time, fund_name, (current_index + 1), new_vec_index, proposer_account_info.key.to_string());
     } else {
         let new_aggregator_size = extra_proposal_space + current_proposal_space as usize;
         let current_rent_exempt = proposal_aggregator_info.lamports();
@@ -1476,6 +1520,9 @@ fn process_init_investment_proposal(
             )?;
         }
 
+        let num_of_proposals = proposal_aggregator_data.proposals.len();
+        let vec_index = proposal_aggregator_data.proposals[num_of_proposals - 1].vec_index + 1;
+
         proposal_aggregator_info.realloc(new_aggregator_size, false)?;
         
         proposal_aggregator_data.proposals.push( Proposal {
@@ -1483,77 +1530,53 @@ fn process_init_investment_proposal(
             from_assets: from_assets_mints,
             to_assets: to_assets_mints,
             amounts,
-            slippage,
+            slippages,
             votes_yes: 0 as u64,
             votes_no: 0 as u64,
             creation_time,
             deadline,
-            executed: false
+            executed: false,
+            vec_index
         });
 
         proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
-    }
 
-    let mut proposal_index = current_index;
-    let mut vec_index = 0 as u8;
+        let (vote_pda, vote_bump) = Pubkey::find_program_address(&[b"vote", &[current_index], &vec_index.to_le_bytes(), fund_account_info.key.as_ref()], program_id);
+        if *vote_account_info.key != vote_pda {
+            return Err(FundError::InvalidVoteAccount.into());
+        }
+        if !vote_account_info.data_is_empty() {
+            msg!("Wrong Vote Account");
+            return Err(FundError::InvalidVoteAccount.into());
+        }
 
-    if flag {
-        proposal_index = current_index + 1;
-    } else {
-        let proposal_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
-        vec_index = ((proposal_data.proposals.len()) as u8) - 1;
-    }
-
-    let (vote_pda, vote_bump) = Pubkey::find_program_address(&[b"vote", &[proposal_index], &[vec_index], fund_account_info.key.as_ref()], program_id);
-
-    if *vote_account_a_info.key != vote_pda && *vote_account_b_info.key != vote_pda {
-        msg!("Wrong vote account");
-        return Err(FundError::InvalidVoteAccount.into());
-    }
-
-    let vote_account_size = 6 as usize;
-    let vote_rent = rent.minimum_balance(vote_account_size);
-
-    let voters: Vec<(Pubkey, u8)> = vec![];
-
-    let vote_info = VoteAccount {
-        proposal_index,
-        vec_index,
-        voters
-    };
-
-    if *vote_account_a_info.key == vote_pda {
-        msg!("yaha aaya");
+        let vote_space = 6 as usize;
+        let vote_rent = rent.minimum_balance(vote_space);
+        
         invoke_signed(
             &system_instruction::create_account(
                 proposer_account_info.key,
-                vote_account_a_info.key,
+                vote_account_info.key,
                 vote_rent,
-                vote_account_size as u64,
+                vote_space as u64,
                 program_id
             ),
-            &[proposer_account_info.clone(), vote_account_a_info.clone(), system_program_info.clone()],
-            &[&[b"vote", &[proposal_index], &[vec_index], fund_pda.as_ref(), &[vote_bump]]]
+            &[vote_account_info.clone(), proposer_account_info.clone(), system_program_info.clone()],
+            &[&[b"vote", &[current_index], &vec_index.to_le_bytes(), &[vote_bump]]]
         )?;
 
-        vote_info.serialize(&mut &mut vote_account_a_info.data.borrow_mut()[..])?;
-    } else {
-        invoke_signed(
-            &system_instruction::create_account(
-                proposer_account_info.key,
-                vote_account_b_info.key,
-                vote_rent,
-                vote_account_size as u64,
-                program_id
-            ),
-            &[proposer_account_info.clone(), vote_account_b_info.clone(), system_program_info.clone()],
-            &[&[b"vote", &[proposal_index], &[vec_index], fund_pda.as_ref(), &[vote_bump]]]
-        )?;
+        let voters: Vec<(Pubkey, u8)> = vec![];
 
-        vote_info.serialize(&mut &mut vote_account_b_info.data.borrow_mut()[..])?;
+        let vote_data = VoteAccount {
+            proposal_index: current_index,
+            vec_index,
+            voters,
+        };
+
+        vote_data.serialize(&mut &mut vote_account_info.data.borrow_mut()[..])?;
+
+        msg!("[FUND-ACTIVITY] {} {} {} Proposal created: ({}, {}) by {}", fund_account_info.key.to_string(), creation_time, fund_name, (current_index + 1), vec_index, proposer_account_info.key.to_string());
     }
-
-    msg!("[FUND-ACTIVITY] {} {} {} Proposal created: ({}, {}) by {}", fund_account_info.key.to_string(), creation_time, fund_name, proposal_index, vec_index, proposer_account_info.key.to_string());
 
     Ok(())
 }
@@ -1564,7 +1587,7 @@ fn process_vote_on_proposal(
     accounts: &[AccountInfo],
     vote: u8,
     proposal_index: u8,
-    vec_index: u8,
+    vec_index: u16,
     fund_name: String,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
@@ -1577,7 +1600,8 @@ fn process_vote_on_proposal(
     let fund_account_info = next_account_info(accounts_iter)?; // fund Account ...................................
     let governance_token_mint_info = next_account_info(accounts_iter)?; // Governance Mint account ...............
     let voter_token_account_info = next_account_info(accounts_iter)?; // Voter's governance token account ........
-    let token_program_2022_info = next_account_info(accounts_iter)?;
+    let token_program_2022_info = next_account_info(accounts_iter)?; // Token program extensions .................
+    let proposer_account_info = next_account_info(accounts_iter)?; // Proposer Wallet ............................
 
     // Voter needs to be signer
     if !voter_account_info.is_signer {
@@ -1586,20 +1610,20 @@ fn process_vote_on_proposal(
 
     // Pdas derivation
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-    let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"vote", &[proposal_index], &[vec_index], fund_account_info.key.as_ref()], program_id);
+    let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"vote", &[proposal_index], &vec_index.to_le_bytes(), fund_account_info.key.as_ref()], program_id);
     let token_account = spl_associated_token_account::get_associated_token_address_with_program_id(
         voter_account_info.key,
         governance_token_mint_info.key,
         token_program_2022_info.key
     );
 
-    let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index], fund_account_info.key.as_ref()], program_id);
+    let (proposal_aggregator_pda, _proposal_aggregator_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index], fund_account_info.key.as_ref()], program_id);
 
     // Pdas verification
     if *fund_account_info.key != fund_pda ||
        *vote_account_info.key != vote_pda ||
        token_account != *voter_token_account_info.key ||
-       *proposal_aggregator_info.key != proposal_pda {
+       *proposal_aggregator_info.key != proposal_aggregator_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1618,12 +1642,20 @@ fn process_vote_on_proposal(
         return Err(FundError::InvalidGovernanceMint.into());
     }
 
-    let rent = Rent::get()?;
-    let extra_vote_space = 33 as usize;
-    let current_vote_space = vote_account_info.data_len();
-    let new_vote_space = current_vote_space + extra_vote_space;
-    let new_rent = rent.minimum_balance(new_vote_space);
-    let current_rent = vote_account_info.lamports();
+    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+    let proposal = proposal_aggregator_data
+        .proposals
+        .iter()
+        .find(|proposal| proposal.vec_index == vec_index)
+        .ok_or(FundError::InvalidProposalAccount)?;
+
+    if proposal.proposer != *proposer_account_info.key {
+        return Err(FundError::InvalidProposerInfo.into());
+    }
+
+    if proposal.deadline < current_time {
+        return Err(FundError::VotingCeased.into());
+    }
 
     let mut vote_data = VoteAccount::try_from_slice(&vote_account_info.data.borrow())?;
 
@@ -1636,15 +1668,22 @@ fn process_vote_on_proposal(
         return Err(FundError::AlreadyVoted.into());
     }
 
-    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
-    if proposal_aggregator_data.proposals[vec_index as usize].deadline < current_time {
-        return Err(FundError::VotingCeased.into());
+    if voter_token_account_info.data_is_empty() {
+        msg!("No Voting Power");
+        return Err(FundError::NoVotingPower.into());
     }
 
     if vote_account_info.data_is_empty() {
         msg!("Vote account should be already created");
         return Err(FundError::InvalidVoteAccount.into());
     } else {
+        let rent = Rent::get()?;
+        let extra_vote_space = 33 as usize;
+        let current_vote_space = vote_account_info.data_len();
+        let new_vote_space = current_vote_space + extra_vote_space;
+        let new_rent = rent.minimum_balance(new_vote_space);
+        let current_rent = vote_account_info.lamports();
+
         if new_rent > current_rent {
             invoke(
                 &system_instruction::transfer(
@@ -1665,6 +1704,12 @@ fn process_vote_on_proposal(
         let token_account = spl_token_2022::extension::StateWithExtensions::<spl_token_2022::state::Account>::unpack(&token_account_data)?;
         let base_token_account = token_account.base;
         let balance = base_token_account.amount;
+
+        if balance == 0 {
+            msg!("No Voting Power");
+            return Err(FundError::NoVotingPower.into());
+        }
+
         if vote != 0 {
             proposal_aggregator_data.proposals[vec_index as usize].votes_yes += balance;
         } else {
@@ -1675,6 +1720,99 @@ fn process_vote_on_proposal(
     }
 
     msg!("[FUND-ACTIVITY] {} {} {} Vote: {} on proposal ({}, {})", fund_account_info.key.to_string(), current_time, fund_name, voter_account_info.key.to_string(), proposal_index, vec_index);
+
+    Ok(())
+}
+
+
+fn process_cancel_investment_proposal(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    fund_name: String,
+    proposal_index: u8,
+    vec_index: u16
+) -> ProgramResult {
+    let current_time = Clock::get()?.unix_timestamp;
+
+    let accounts_iter = &mut accounts.iter();
+    let proposer_account_info = next_account_info(accounts_iter)?; // Proposer wallet ..........................
+    let proposal_aggregator_info = next_account_info(accounts_iter)?; // proposal aggregator ...................
+    let vote_account_info = next_account_info(accounts_iter)?; // vote account .................................
+    let fund_account_info = next_account_info(accounts_iter)?; // fund account .................................
+    let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve .................................
+
+    if !proposer_account_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (proposal_aggregator_pda, _proposal_aggregator_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index], fund_account_info.key.as_ref()], program_id);
+    let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"vote", &[proposal_index], &vec_index.to_le_bytes(), fund_account_info.key.as_ref()], program_id);
+    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
+
+    if *fund_account_info.key != fund_pda {
+        return Err(FundError::InvalidFundDetails.into());
+    }
+
+    if *proposal_aggregator_info.key != proposal_aggregator_pda {
+        return Err(FundError::InvalidProposalAccount.into());
+    }
+
+    if *vote_account_info.key != vote_pda {
+        return Err(FundError::InvalidVoteAccount.into());
+    }
+
+    if *rent_reserve_info.key != rent_pda {
+        return Err(FundError::InvalidRentAccount.into());
+    }
+
+    let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+    if proposal_index > fund_data.current_proposal_index {
+        return Err(FundError::InvalidProposalAccount.into());
+    }
+
+    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+    let proposal = proposal_aggregator_data
+        .proposals
+        .iter()
+        .find(|proposal| proposal.vec_index == vec_index)
+        .ok_or(FundError::InvalidProposalAccount)?;
+
+    if proposal.proposer != *proposer_account_info.key {
+        return Err(FundError::InvalidProposerInfo.into());
+    }
+
+    let num_of_swaps = proposal.amounts.len();
+
+    // Remove proposal from aggregator
+    let rent = Rent::get()?;
+    let current_aggregator_size = proposal_aggregator_info.data_len();
+    let new_aggregator_size = current_aggregator_size - (83 + num_of_swaps*74);
+    let current_aggregator_rent = proposal_aggregator_info.lamports();
+    let new_aggregator_rent = rent.minimum_balance(new_aggregator_size);
+
+    proposal_aggregator_info.realloc(new_aggregator_size, false)?;
+
+    if new_aggregator_rent < current_aggregator_rent {
+        **proposal_aggregator_info.lamports.borrow_mut() -= current_aggregator_rent - new_aggregator_rent;
+        **proposer_account_info.lamports.borrow_mut() += current_aggregator_rent - new_aggregator_rent;
+    }
+
+    proposal_aggregator_data.proposals.retain(|p| p.vec_index != vec_index);
+
+    proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
+
+    // Delete Vote Account
+    let lamports = vote_account_info.lamports();
+    **rent_reserve_info.lamports.borrow_mut() += lamports;
+    **vote_account_info.lamports.borrow_mut() -= lamports;
+
+    let mut data = vote_account_info.data.borrow_mut();
+    for byte in data.iter_mut() {
+        *byte = 0;
+    }
+
+    msg!("[FUND-ACTIVITY] {} {} Investment Proposal ({}, {}) deleted by proposer ({})", fund_account_info.key.to_string(), current_time, proposal_index, vec_index, proposer_account_info.key.to_string());
 
     Ok(())
 }
@@ -1868,7 +2006,7 @@ fn process_execute_proposal(
     }
 
     let amount = proposal_aggregator_data.proposals[vec_index as usize].amounts[swap_number as usize];
-    let slippage = proposal_aggregator_data.proposals[vec_index as usize].slippage[swap_number as usize];
+    let slippage = proposal_aggregator_data.proposals[vec_index as usize].slippages[swap_number as usize];
 
     let discriminator: &[u8] = &[0x2b, 0x04, 0xed, 0x0b, 0x1a, 0xc9, 0x1e, 0x62];
     msg!("discriminator length: {}", discriminator.len());

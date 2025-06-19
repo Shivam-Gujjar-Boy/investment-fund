@@ -86,3 +86,12 @@ pub struct JoinVoteAccount {
     pub proposal_index: u8,
     pub voters: Vec<(Pubkey, u8)>
 }
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct IncrementProposalAccount {
+    pub proposer: Pubkey,
+    pub new_size: u32,
+    pub votes_yes: u64,
+    pub votes_no: u64,
+    pub voters: Vec<(Pubkey, u8)>
+}

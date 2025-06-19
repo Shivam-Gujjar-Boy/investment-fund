@@ -88,6 +88,23 @@ pub enum FundInstruction {
         fund_name: String,
         proposal_index: u8,
         vec_index: u16,
+    },
+
+    // tag = 14
+    InitIncrementProposal {
+        fund_name: String,
+        new_size: u32,
+    },
+
+    // tag = 15
+    VoteOnIncrement {
+        fund_name: String,
+        vote: u8,
+    },
+
+    // tag = 16
+    CancelIncrementProposal {
+        fund_name: String,
     }
 
 }
@@ -214,6 +231,24 @@ impl FundInstruction {
                 let vec_index = u16::from_le_bytes(vec_index_bytes.try_into().expect("Invalid Vec Index"));
 
                 Self::CancelInvestmentProposal { fund_name, proposal_index, vec_index }
+            }
+            14 => {
+                let (new_size_bytes, rest) = rest.split_at(4 as usize);
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                let new_size = u32::from_le_bytes(new_size_bytes.try_into().expect("Invalid New Size"));
+
+                Self::InitIncrementProposal { fund_name, new_size }
+            }
+            15 => {
+                let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+
+                Self::VoteOnIncrement { fund_name, vote }
+            }
+            16 => {
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+
+                Self::CancelIncrementProposal { fund_name }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

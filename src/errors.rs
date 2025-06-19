@@ -26,6 +26,9 @@ pub enum FundError {
     NoVotingPower,
     NotAFundMember,
     DeadlineReached,
+    FundAlreadyFull,
+    InvalidNewSize,
+    IncrementProposalExists,
 }
 
 impl From<FundError> for ProgramError {

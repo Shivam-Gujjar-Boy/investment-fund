@@ -939,7 +939,9 @@ fn process_add_member<'a>(
     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     let total_voting_power = fund_data.total_deposit;
 
-
+    if fund_data.expected_members <= fund_data.members.len() as u32 {
+        return Err(FundError::FundAlreadyFull.into());
+    }
 
     let rent = Rent::get()?;
 

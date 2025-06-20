@@ -433,18 +433,20 @@ fn process_init_user_account(
 
     // User should be the signer
     if !creator_account_info.is_signer {
+        msg!("[USER-ERROR] {} Wrong signer!(must be your wallet)", creator_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
     // Derive User PDA and check if provided is same as expected
     let (user_pda, user_bump) = Pubkey::find_program_address(&[b"user", creator_account_info.key.as_ref()], program_id);
     if *user_account_info.key != user_pda {
+        msg!("[USER-ERROR] {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", creator_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
     // If user PDA already exists
     if !user_account_info.data_is_empty() {
-        msg!("User already exists");
+        msg!("[USER-ERROR] {} User already exists", creator_account_info.key.to_string());
         return Ok(());
     }
 
@@ -474,7 +476,6 @@ fn process_init_user_account(
         funds,
     };
     user_data.serialize(&mut &mut user_account_info.data.borrow_mut()[..])?;
-    msg!("User Account created successfully");
 
     Ok(())
 
@@ -496,17 +497,24 @@ fn process_init_join_proposal(
     let user_account_info = next_account_info(accounts_iter)?; // user's global account ......................
 
     if !joiner_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
-
+    let mut proposal_index = 0;
     let index = 0 as u8;
 
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
     let (join_proposal_pda, _join_proposal_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_pda.as_ref()], program_id);
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", joiner_account_info.key.as_ref()], program_id);
+    let (join_vote_pda, join_vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_pda.as_ref()], program_id);
 
-    if *fund_account_info.key != fund_pda || *join_proposal_aggregator_info.key != join_proposal_pda || *user_account_info.key != user_pda {
+    if *fund_account_info.key != fund_pda || *join_proposal_aggregator_info.key != join_proposal_pda || *user_account_info.key != user_pda || *vote_account_info.key != join_vote_pda{
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
+    }
+
+    if !vote_account_info.data_is_empty() {
+        return Err(FundError::InvalidVoteAccount.into());
     }
 
     let mut join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
@@ -514,7 +522,7 @@ fn process_init_join_proposal(
     // Deserialize User Data and check if User is already a member of provided Fund
     let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
     if user_data.funds.iter().any(|entry| entry.fund == *fund_account_info.key) {
-        msg!("Either a member already, or has a pending join proposal for this fund!");
+        msg!("[FUND-ERROR] {} {} Either a member already, or has a pending join proposal for this fund!", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::AlreadyMember.into());
     }
 
@@ -525,11 +533,13 @@ fn process_init_join_proposal(
         .any(|proposal| proposal.joiner == *joiner_account_info.key);
 
     if joiner_in_queue {
+        msg!("[FUND-ERROR] {} {} You have already applied for this fund! If want to apply again, delete your existing proposal in the 'Pending Funds' section.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::AlreadyAppliedForEntry.into());
     }
 
     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     if fund_data.members.len() >= fund_data.expected_members as usize {
+        msg!("[FUND-ERROR] {} {} Fund already exists!!", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::FundAlreadyFull.into());
     }
 
@@ -553,7 +563,6 @@ fn process_init_join_proposal(
 
     join_proposal_aggregator_info.realloc(new_space, false)?;
     let num_of_join_proposals = join_proposal_data.join_proposals.len();
-    let mut proposal_index = 0;
     if num_of_join_proposals != 0 {
         proposal_index = join_proposal_data.join_proposals[join_proposal_data.join_proposals.len() - 1].proposal_index + 1;
     }
@@ -566,15 +575,6 @@ fn process_init_join_proposal(
     });
 
     join_proposal_data.serialize(&mut &mut join_proposal_aggregator_info.data.borrow_mut()[..])?;
-
-    let (join_vote_pda, join_vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_pda.as_ref()], program_id);
-    if *vote_account_info.key != join_vote_pda {
-        return Err(FundError::InvalidVoteAccount.into());
-    }
-
-    if !vote_account_info.data_is_empty() {
-        return Err(FundError::InvalidVoteAccount.into());
-    }
 
     let vote_space = 5 as usize;
     
@@ -654,6 +654,7 @@ fn process_vote_on_join_proposal(
     let joiner_pda_info = next_account_info(accounts_iter)?; // joiner global account ............................
 
     if !voter_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -669,6 +670,7 @@ fn process_vote_on_join_proposal(
        *vote_account_info.key != join_vote_pda ||
        *governance_token_mint_info.key != governance_mint ||
        *joiner_pda_info.key != joiner_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -677,15 +679,19 @@ fn process_vote_on_join_proposal(
         governance_token_mint_info.key,
         token_program_2022_info.key
     );
+
     if token_account != *voter_token_account_info.key {
+        msg!("[FUND-ERROR] {} {} Your token account doesn's match the derived one.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidTokenAccount.into());
     }
 
     if voter_token_account_info.data_is_empty() {
-        return Err(FundError::NoVotingPower.into());
+        msg!("[FUND-ERROR] {} {} Your token account does not exist.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+        return  Err(FundError::NoVotingPower.into());
     }
 
     if vote_account_info.data_is_empty() {
+        msg!("[FUND-ERROR] {} {} The vote account for this proposal doesn't exist. Maybe the proposal is cancelled.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidVoteAccount.into());
     }
 
@@ -698,6 +704,7 @@ fn process_vote_on_join_proposal(
         .ok_or(FundError::InvalidAccountData)?;
 
     if proposal.joiner != *joiner_account_info.key {
+        msg!("[FUND-ERROR] {} {} The proposal's joiner wallet differs from what is provided.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -709,6 +716,7 @@ fn process_vote_on_join_proposal(
         .any(|member| *member == *voter_account_info.key);
 
     if !is_voter_member {
+        msg!("[FUND-ERROR] {} {} You are not a member of the fund and so cannot vote.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::NotAFundMember.into());
     }
 
@@ -721,6 +729,7 @@ fn process_vote_on_join_proposal(
         .any(|(key, _)| *key == *voter_account_info.key);
 
     if voter_exists {
+        msg!("[FUND-ERROR] {} {} You have voted for this proposal already.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::AlreadyVoted.into());
     }
 
@@ -748,6 +757,7 @@ fn process_vote_on_join_proposal(
 
     
     if *voter_token_account_info.owner != *token_program_2022_info.key {
+        msg!("[FUND-ERROR] {} {} The owner of your token account is not Token Program 2022.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -771,7 +781,7 @@ fn process_vote_on_join_proposal(
                 user_specific.is_pending = true;
                 user_specific.is_eligible = true;
             } else {
-                msg!("User is not a member in this fund");
+                msg!("[FUND-ERROR] {} {} User is not a member in this fund.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
                 return Err(FundError::InvalidAccountData.into());
             }
     }
@@ -799,6 +809,7 @@ fn process_cancel_join_proposal(
     let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ...............................
 
     if !joiner_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -814,11 +825,13 @@ fn process_cancel_join_proposal(
        *join_proposal_aggregator_info.key != join_aggregator_pda ||
        *vote_account_info.key != vote_pda ||
        *rent_reserve_info.key != rent_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
        }
 
     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     if fund_data.is_private == 0 {
+        msg!("[FUND-ERROR] {} {} This fund is not private.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::InvalidFundDetails.into());
     }
 
@@ -828,6 +841,7 @@ fn process_cancel_join_proposal(
        .any(|member| *member == *joiner_account_info.key);
 
     if is_joiner_member {
+        msg!("[FUND-ERROR] {} {} You are already a member of this fund.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::AlreadyMember.into());
     }
 
@@ -839,6 +853,7 @@ fn process_cancel_join_proposal(
         .ok_or(FundError::InvalidAccountData)?;
 
     if !user_specific.is_pending {
+        msg!("[FUND-ERROR] {} {} You are already a member of this fund.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::AlreadyMember.into());
     }
 
@@ -851,6 +866,7 @@ fn process_cancel_join_proposal(
         .ok_or(FundError::InvalidAccountData)?;
 
     if proposal.joiner != *joiner_account_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong joiner/proposer wallet address.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
         return Err(FundError::InvalidProposerInfo.into());
     }
 
@@ -918,6 +934,7 @@ fn process_add_member<'a>(
 
     // User should be signer
     if !member_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -926,18 +943,20 @@ fn process_add_member<'a>(
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", member_account_info.key.as_ref()], program_id);
     let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
     if *fund_account_info.key != fund_pda || *user_account_info.key != user_pda || *rent_reserve_info.key != rent_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
     // Check if Fund exist or not!
     if fund_account_info.data_is_empty() {
+        msg!("[FUND-ERROR] {} {} This fund does not exists..", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
     // Deserialize User Data and check if User is already a member of provided Fund
     let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
     if user_data.funds.iter().any(|entry| entry.fund == *fund_account_info.key && !entry.is_pending) {
-        msg!("User is already a member");
+        msg!("[FUND-ERROR] {} {} User is already a member.", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::AlreadyMember.into());
     }
 
@@ -946,6 +965,7 @@ fn process_add_member<'a>(
     let total_voting_power = fund_data.total_deposit;
 
     if fund_data.expected_members <= fund_data.members.len() as u32 {
+        
         return Err(FundError::FundAlreadyFull.into());
     }
 
@@ -2295,16 +2315,16 @@ fn process_toggle_refund_type(
     }
 
     if proposal_data.refund_type == 0 && refund_type == 1 {
-        invoke_signed(
+        invoke(
             &spl_token_2022::instruction::burn(
                 &spl_token_2022::id(),
                 proposer_token_account_info.key,
                 governance_mint_info.key,
-                fund_account_info.key,
+                proposer_account_info.key,
                 &[], 1_510_000
             )?,
-            &[proposer_token_account_info.clone(), governance_mint_info.clone(), fund_account_info.clone(), token_program_2022_info.clone()],
-            &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]]
+            &[proposer_token_account_info.clone(), governance_mint_info.clone(), proposer_account_info.clone(), token_program_2022_info.clone()],
+            // &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]]
         )?;
     } else if proposal_data.refund_type == 1 && refund_type == 0 {
         invoke_signed(

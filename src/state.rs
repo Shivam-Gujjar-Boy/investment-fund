@@ -92,6 +92,7 @@ pub struct JoinVoteAccount {
 pub struct IncrementProposalAccount {
     pub proposer: Pubkey,
     pub new_size: u32,
+    pub refund_type: u8,
     pub votes_yes: u64,
     pub votes_no: u64,
     pub voters: Vec<(Pubkey, u8)>

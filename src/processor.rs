@@ -97,9 +97,9 @@ pub fn process_instruction<'a>(
             process_cancel_investment_proposal(program_id, accounts, fund_name, proposal_index, vec_index)
         }
 
-        FundInstruction::InitIncrementProposal { fund_name, new_size } => {
+        FundInstruction::InitIncrementProposal { fund_name, new_size, refund_type } => {
             msg!("Instruction: Init Increment Proposal");
-            process_init_increment_proposal(program_id, accounts, fund_name, new_size)
+            process_init_increment_proposal(program_id, accounts, fund_name, new_size, refund_type)
         }
 
         FundInstruction::VoteOnIncrement { fund_name, vote } => {
@@ -110,6 +110,11 @@ pub fn process_instruction<'a>(
         FundInstruction::CancelIncrementProposal { fund_name } => {
             msg!("Instruction: Cancel Increment Proposal");
             process_cancel_increment_proposal(program_id, accounts, fund_name)
+        }
+
+        FundInstruction::ToggleRefundType { fund_name, refund_type } => {
+            msg!("Instruction: Toggle Refund Type");
+            process_toggle_refund_type(program_id, accounts, fund_name, refund_type)
         }
 
         _ => Err(FundError::InvalidInstruction.into()),
@@ -2126,26 +2131,29 @@ fn process_init_increment_proposal(
     accounts: &[AccountInfo],
     fund_name: String,
     new_size: u32,
+    refund_type: u8,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
     let accounts_iter = &mut accounts.iter();
-    let proposer_account_info = next_account_info(accounts_iter)?;
-    let increment_proposal_account_info = next_account_info(accounts_iter)?;
-    let system_program_info = next_account_info(accounts_iter)?;
-    let fund_account_info = next_account_info(accounts_iter)?;
-    let governance_mint_info = next_account_info(accounts_iter)?;
-    let proposer_token_account_info = next_account_info(accounts_iter)?;
-    let token_program_2022_info = next_account_info(accounts_iter)?;
+    let proposer_account_info = next_account_info(accounts_iter)?; // proposer wallet ...........................
+    let increment_proposal_account_info = next_account_info(accounts_iter)?; // proposal account ................
+    let system_program_info = next_account_info(accounts_iter)?; // system program ..............................
+    let fund_account_info = next_account_info(accounts_iter)?; // fund account ..................................
+    let governance_mint_info = next_account_info(accounts_iter)?; // governance mint ............................
+    let proposer_token_account_info = next_account_info(accounts_iter)?; // token account .......................
+    let token_program_2022_info = next_account_info(accounts_iter)?; // token program 2022 ......................
+    let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ..................................
 
     if !proposer_account_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
     let (increment_proposal_pda, increment_proposal_bump) = Pubkey::find_program_address(&[b"increment-proposal-account", fund_account_info.key.as_ref()], program_id);
+    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
-    if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda {
+    if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda || *rent_reserve_info.key != rent_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -2184,10 +2192,37 @@ fn process_init_increment_proposal(
     if 2*balance >= fund_data.total_deposit {
         fund_data.expected_members = new_size;
         fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+        if refund_type == 0 {
+            invoke(
+                &system_instruction::transfer(
+                    proposer_account_info.key,
+                    rent_reserve_info.key,
+                    1_510_000
+                ),
+                &[proposer_account_info.clone(), rent_reserve_info.clone(), system_program_info.clone()]
+            )?;
+            invoke_signed(
+                &spl_token_2022::instruction::mint_to(
+                    token_program_2022_info.key,
+                    governance_mint_info.key,
+                    proposer_token_account_info.key,
+                    fund_account_info.key,
+                    &[],
+                    1_510_000,
+                )?,
+                &[
+                    governance_mint_info.clone(),
+                    proposer_token_account_info.clone(),
+                    fund_account_info.clone(),
+                    token_program_2022_info.clone(),
+                ],
+                &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
+            )?;
+        }
         msg!("[FUND-ACTIVITY] {} {} Fund's max size increased to {}", fund_account_info.key.to_string(), current_time, new_size);
     } else {
         let rent = Rent::get()?;
-        let proposal_space = 89 as usize;
+        let proposal_space = 90 as usize;
         let proposal_rent = rent.minimum_balance(proposal_space);
 
         invoke_signed(
@@ -2206,6 +2241,7 @@ fn process_init_increment_proposal(
         let proposal_data = IncrementProposalAccount {
             proposer: *proposer_account_info.key,
             new_size,
+            refund_type,
             votes_yes: balance,
             votes_no: 0 as u64,
             voters
@@ -2219,6 +2255,39 @@ fn process_init_increment_proposal(
     Ok(())
 }
 
+fn process_toggle_refund_type(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    fund_name: String,
+    refund_type: u8
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let proposer_account_info = next_account_info(accounts_iter)?; // proposer wallet ........................
+    let fund_account_info = next_account_info(accounts_iter)?; // fund account ...............................
+    let increment_proposal_account_info = next_account_info(accounts_iter)?; // proposal account .............
+
+    if !proposer_account_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (increment_proposal_pda, _increment_proposal_bump) = Pubkey::find_program_address(&[b"increment-proposal-account", fund_account_info.key.as_ref()], program_id);
+
+    if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda {
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let mut proposal_data = IncrementProposalAccount::try_from_slice(&increment_proposal_account_info.data.borrow())?;
+    if proposal_data.proposer != *proposer_account_info.key {
+        return Err(FundError::InvalidProposerInfo.into());
+    }
+
+    proposal_data.refund_type = refund_type;
+    proposal_data.serialize(&mut &mut increment_proposal_account_info.data.borrow_mut()[..])?;
+
+    Ok(())
+}
+
 fn process_vote_increment_proposal(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -2228,25 +2297,25 @@ fn process_vote_increment_proposal(
     let current_time = Clock::get()?.unix_timestamp;
 
     let accounts_iter = &mut accounts.iter();
-    let voter_account_info = next_account_info(accounts_iter)?;
-    let increment_proposal_account_info = next_account_info(accounts_iter)?;
-    let system_program_info = next_account_info(accounts_iter)?;
-    let fund_account_info = next_account_info(accounts_iter)?;
-    let governance_mint_info = next_account_info(accounts_iter)?;
-    let voter_token_account_info = next_account_info(accounts_iter)?;
-    let token_program_2022_info = next_account_info(accounts_iter)?;
-    let proposer_account_info = next_account_info(accounts_iter)?;
-    let rent_sysvar_info = next_account_info(accounts_iter)?;
+    let voter_account_info = next_account_info(accounts_iter)?; // voter wallet ...................................
+    let increment_proposal_account_info = next_account_info(accounts_iter)?; // proposal account ..................
+    let system_program_info = next_account_info(accounts_iter)?; // system program ................................
+    let fund_account_info = next_account_info(accounts_iter)?; // fund account ....................................
+    let governance_mint_info = next_account_info(accounts_iter)?; // governance mint ..............................
+    let voter_token_account_info = next_account_info(accounts_iter)?; // voter token account ......................
+    let token_program_2022_info = next_account_info(accounts_iter)?; // token program 2022 ........................
+    let proposer_account_info = next_account_info(accounts_iter)?; // proposer wallet .............................
+    let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ....................................
 
     if !voter_account_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
     let (increment_proposal_pda, _increment_proposal_bump) = Pubkey::find_program_address(&[b"increment-proposal-account", fund_account_info.key.as_ref()], program_id);
     let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
-    if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda || *rent_sysvar_info.key != rent_pda {
+    if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda || *rent_reserve_info.key != rent_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -2300,9 +2369,39 @@ fn process_vote_increment_proposal(
         fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
         let lamports = increment_proposal_account_info.lamports();
         **increment_proposal_account_info.lamports.borrow_mut() = 0;
-        **proposer_account_info.lamports.borrow_mut() += 1280640;
-        if lamports - 1280640 > 0 {
-            **rent_sysvar_info.lamports.borrow_mut() += lamports - 1280640;
+        if proposal_data.refund_type == 1 {
+            **proposer_account_info.lamports.borrow_mut() += 1_510_000;
+            if lamports - 1_510_000 > 0 {
+                **rent_reserve_info.lamports.borrow_mut() += lamports - 1_510_000;
+            }
+        } else {
+            let proposer_token_account_info = next_account_info(accounts_iter)?;
+            let token_account = get_associated_token_address_with_program_id(
+                proposer_account_info.key,
+                governance_mint_info.key,
+                token_program_2022_info.key
+            );
+            if token_account != *proposer_token_account_info.key {
+                return Err(FundError::InvalidTokenAccount.into());
+            }
+            **rent_reserve_info.lamports.borrow_mut() += lamports;
+            invoke_signed(
+                &spl_token_2022::instruction::mint_to(
+                    token_program_2022_info.key,
+                    governance_mint_info.key,
+                    proposer_token_account_info.key,
+                    fund_account_info.key,
+                    &[],
+                    1_510_000,
+                )?,
+                &[
+                    governance_mint_info.clone(),
+                    proposer_token_account_info.clone(),
+                    fund_account_info.clone(),
+                    token_program_2022_info.clone(),
+                ],
+                &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
+            )?;
         }
 
         msg!("[FUND-ACTIVITY] {} {} Fund's max size increased to {}", fund_account_info.key.to_string(), current_time, proposal_data.new_size);
@@ -2342,20 +2441,22 @@ fn process_cancel_increment_proposal(
     let current_time = Clock::get()?.unix_timestamp;
 
     let accounts_iter = &mut accounts.iter();
-    let proposer_account_info = next_account_info(accounts_iter)?;
-    let increment_proposal_account_info = next_account_info(accounts_iter)?;
-    let fund_account_info = next_account_info(accounts_iter)?;
-    let rent_sysvar_info = next_account_info(accounts_iter)?;
+    let proposer_account_info = next_account_info(accounts_iter)?; // proposer wallet ............................
+    let increment_proposal_account_info = next_account_info(accounts_iter)?; // proposal account .................
+    let fund_account_info = next_account_info(accounts_iter)?; // fund account ...................................
+    let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ...................................
+    let governance_mint_info = next_account_info(accounts_iter)?; // governance mint .............................
+    let token_program_2022_info = next_account_info(accounts_iter)?; // token program 2022 .......................
 
     if !proposer_account_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
     let (increment_proposal_pda, _increment_proposal_bump) = Pubkey::find_program_address(&[b"increment-proposal-account", fund_account_info.key.as_ref()], program_id);
     let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
-    if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda || *rent_sysvar_info.key != rent_pda {
+    if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda || *rent_reserve_info.key != rent_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -2366,9 +2467,39 @@ fn process_cancel_increment_proposal(
 
     let lamports = increment_proposal_account_info.lamports();
     **increment_proposal_account_info.lamports.borrow_mut() = 0;
-    **proposer_account_info.lamports.borrow_mut() += 1280640;
-    if lamports - 1280540 > 0 {
-        **rent_sysvar_info.lamports.borrow_mut() += lamports - 1280640;
+    if proposal_data.refund_type == 1 {
+        **proposer_account_info.lamports.borrow_mut() += 1_510_000;
+        if lamports - 1_510_000 > 0 {
+            **rent_reserve_info.lamports.borrow_mut() += lamports - 1_510_000;
+        }
+    } else {
+        let proposer_token_account_info = next_account_info(accounts_iter)?;
+        let token_account = get_associated_token_address_with_program_id(
+            proposer_account_info.key,
+            governance_mint_info.key,
+            token_program_2022_info.key
+        );
+        if token_account != *proposer_token_account_info.key {
+            return Err(FundError::InvalidTokenAccount.into());
+        }
+        **rent_reserve_info.lamports.borrow_mut() += lamports;
+        invoke_signed(
+            &spl_token_2022::instruction::mint_to(
+                token_program_2022_info.key,
+                governance_mint_info.key,
+                proposer_token_account_info.key,
+                fund_account_info.key,
+                &[],
+                1_510_000,
+            )?,
+            &[
+                governance_mint_info.clone(),
+                proposer_token_account_info.clone(),
+                fund_account_info.clone(),
+                token_program_2022_info.clone(),
+            ],
+            &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
+        )?;
     }
 
     msg!("[FUND-ACTIVITY] {} {} Increment proposal for new size {} deleted", fund_account_info.key.to_string(), current_time, proposal_data.new_size);

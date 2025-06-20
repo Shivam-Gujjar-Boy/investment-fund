@@ -94,6 +94,7 @@ pub enum FundInstruction {
     InitIncrementProposal {
         fund_name: String,
         new_size: u32,
+        refund_type: u8,
     },
 
     // tag = 15
@@ -105,6 +106,12 @@ pub enum FundInstruction {
     // tag = 16
     CancelIncrementProposal {
         fund_name: String,
+    },
+
+    // tag = 17
+    ToggleRefundType {
+        fund_name: String,
+        refund_type: u8,
     }
 
 }
@@ -233,11 +240,12 @@ impl FundInstruction {
                 Self::CancelInvestmentProposal { fund_name, proposal_index, vec_index }
             }
             14 => {
+                let (&refund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (new_size_bytes, rest) = rest.split_at(4 as usize);
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 let new_size = u32::from_le_bytes(new_size_bytes.try_into().expect("Invalid New Size"));
 
-                Self::InitIncrementProposal { fund_name, new_size }
+                Self::InitIncrementProposal { fund_name, new_size, refund_type }
             }
             15 => {
                 let (&vote, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
@@ -249,6 +257,12 @@ impl FundInstruction {
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::CancelIncrementProposal { fund_name }
+            }
+            17 => {
+                let (&refund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+
+                Self::ToggleRefundType { fund_name, refund_type }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

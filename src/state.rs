@@ -3,7 +3,8 @@ use borsh::{BorshSerialize, BorshDeserialize};
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct FundAccount {
-    pub name: [u8; 27],
+    pub name: [u8; 26],
+    pub is_refunded: bool,
     pub expected_members: u32,
     pub creator_exists: bool,
     pub total_deposit: u64,

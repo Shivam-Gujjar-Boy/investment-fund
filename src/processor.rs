@@ -324,15 +324,20 @@ fn process_init_fund_account<'a>(
 
     // Converting the fund_name to an array of u8 of fixed size 32
     let bytes = fund_name.as_bytes();
-    let mut array = [0u8; 27];
-    let len = bytes.len().min(27);
+    let mut array = [0u8; 26];
+    let len = bytes.len().min(26);
     array[..len].copy_from_slice(&bytes[..len]);
 
     let members: Vec<Pubkey> = vec![*creator_wallet_info.key];
+    let mut is_refunded = false;
+    if expected_members == 1 {
+        is_refunded = true;
+    }
 
     // Deserialization and Serialization of Fund data
     let fund_data = FundAccount {
         name: array,
+        is_refunded,
         expected_members,
         creator_exists: true,
         total_deposit: 0 as u64,
@@ -889,7 +894,6 @@ fn process_cancel_join_proposal(
     }
 
     joiner_data.serialize(&mut &mut joiner_pda_info.data.borrow_mut()[..])?;
-    
 
     Ok(())
 }
@@ -1001,20 +1005,21 @@ fn process_add_member<'a>(
     // Reallocate new bytes for storage of new member pubkey
     fund_account_info.realloc(fund_new_size, false)?;
     fund_data.members.push(*member_account_info.key);
-    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
     // Refund logic
-    if fund_data.expected_members >= fund_data.members.len() as u32 {
-        let refund_per_member: u64 = (rent.minimum_balance(327 + fund_name.len()) + 5760000 as u64) / (fund_data.expected_members as u64);
-        invoke(
-            &system_instruction::transfer(
-                member_account_info.key,
-                rent_reserve_info.key,
-                refund_per_member
-            ),
-            &[member_account_info.clone(), rent_reserve_info.clone(), system_program_info.clone()]
-        )?;
+    let mut refund_per_member: u64 = (rent.minimum_balance(327 + fund_name.len()) + 5760000 as u64) / (fund_data.expected_members as u64);
+    if fund_data.is_refunded {
+        refund_per_member = 1_500_000;
     }
+
+    invoke(
+        &system_instruction::transfer(
+            member_account_info.key,
+            rent_reserve_info.key,
+            refund_per_member
+        ),
+        &[member_account_info.clone(), rent_reserve_info.clone(), system_program_info.clone()]
+    )?;
 
     // If fund is private
     if fund_data.is_private == 1 as u8 {
@@ -1050,9 +1055,7 @@ fn process_add_member<'a>(
 
         let rent = Rent::get()?;
         let current_proposal_aggregator_size = join_proposal_aggregator_info.data_len();
-        msg!("Aggregator current size: {}", current_proposal_aggregator_size);
         let new_proposal_aggregator_size = current_proposal_aggregator_size - 57;
-        msg!("New Aggregator size: {}", new_proposal_aggregator_size);
         let current_aggregator_rent = join_proposal_aggregator_info.lamports();
         let new_aggregator_rent = rent.minimum_balance(new_proposal_aggregator_size);
 
@@ -1088,7 +1091,7 @@ fn process_add_member<'a>(
     }
 
     // If expected number of members are achieved, refund back to creator
-    if fund_data.expected_members == fund_data.members.len() as u32 {
+    if fund_data.expected_members == fund_data.members.len() as u32 && !fund_data.is_refunded {
         let fund_creator_info = next_account_info(accounts_iter)?;
 
         if *fund_creator_info.key != fund_data.members[0] {
@@ -1101,7 +1104,10 @@ fn process_add_member<'a>(
 
         **rent_reserve_info.lamports.borrow_mut() -= refund_to_creator;
         **fund_creator_info.lamports.borrow_mut() += refund_to_creator;
+        fund_data.is_refunded = true;
     }
+
+    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
     msg!("[FUND-ACTIVITY] {} {} {} Member joined: {}", fund_account_info.key.to_string(), current_time, fund_name, member_account_info.key.to_string());
 
@@ -2158,6 +2164,10 @@ fn process_init_increment_proposal(
         return Err(FundError::InvalidNewSize.into());
     }
 
+    if fund_data.expected_members as usize > fund_data.members.len() && !fund_data.is_refunded {
+        return Err(FundError::InvalidInstruction.into());
+    }
+
     if !increment_proposal_account_info.data_is_empty() {
         return Err(FundError::IncrementProposalExists.into());
     }
@@ -2167,12 +2177,17 @@ fn process_init_increment_proposal(
     let base_token_account = token_account.base;
     let balance = base_token_account.amount;
 
+    if balance == 0 {
+        return Err(FundError::NoVotingPower.into());
+    }
+
     if 2*balance >= fund_data.total_deposit {
         fund_data.expected_members = new_size;
+        fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
         msg!("[FUND-ACTIVITY] {} {} Fund's max size increased to {}", fund_account_info.key.to_string(), current_time, new_size);
     } else {
         let rent = Rent::get()?;
-        let proposal_space = 56 as usize;
+        let proposal_space = 89 as usize;
         let proposal_rent = rent.minimum_balance(proposal_space);
 
         invoke_signed(
@@ -2197,9 +2212,6 @@ fn process_init_increment_proposal(
         };
 
         proposal_data.serialize(&mut &mut increment_proposal_account_info.data.borrow_mut()[..])?;
-
-        fund_data.expected_members = new_size;
-        fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
 
         msg!("[FUND-ACTIVITY] {} {} Increment Proposal created with new size: {}", fund_account_info.key.to_string(), current_time, new_size);
     }
@@ -2285,6 +2297,7 @@ fn process_vote_increment_proposal(
 
     if 2 * proposal_data.votes_yes >= fund_data.total_deposit {
         fund_data.expected_members = proposal_data.new_size;
+        fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
         let lamports = increment_proposal_account_info.lamports();
         **increment_proposal_account_info.lamports.borrow_mut() = 0;
         **proposer_account_info.lamports.borrow_mut() += 1280640;

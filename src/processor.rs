@@ -145,6 +145,7 @@ fn process_init_fund_account<'a>(
 
     // Creator should be signer
     if !creator_wallet_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), creator_wallet_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -165,12 +166,13 @@ fn process_init_fund_account<'a>(
        *user_account_info.key != user_pda ||
        *proposal_aggregator_info.key != proposal_pda ||
        *join_proposal_aggregator_info.key != join_aggregator_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), creator_wallet_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
     // Check if the an account already exists on that PDA
     if fund_account_info.lamports() > 0 {
-        msg!("Fund already exists!!");
+        msg!("[FUND-ERROR] {} {} Fund already exists!!", fund_account_info.key.to_string(), creator_wallet_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -180,7 +182,6 @@ fn process_init_fund_account<'a>(
     let vault_space = 40 as usize;
     let extensions = vec![ExtensionType::NonTransferable, ExtensionType::MetadataPointer];
     let base_mint_space = ExtensionType::try_calculate_account_len::<Mint>(&extensions)?;
-    msg!("base mint space = {}", base_mint_space);
     let token_name = fund_name.clone();
     let token_symbol = String::from(symbol_str.clone());
     let token_uri = "".to_string();
@@ -226,8 +227,6 @@ fn process_init_fund_account<'a>(
         &[creator_wallet_info.clone(), governance_mint_info.clone(), system_program_info.clone(), token_program_2022_info.clone()],
         &[&[b"governance", fund_pda.as_ref(), &[governance_bump]]],
     )?;
-    let mint_data_len = governance_mint_info.data_len();
-    msg!("Mint account length: {}", mint_data_len);
 
     invoke_signed(
         &spl_token_2022::instruction::initialize_non_transferable_mint(
@@ -324,8 +323,6 @@ fn process_init_fund_account<'a>(
         ],
         &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]]
     )?;
-
-    msg!("Size bata jara: {}", governance_mint_info.data_len());
 
     // Converting the fund_name to an array of u8 of fixed size 32
     let bytes = fund_name.as_bytes();
@@ -2206,25 +2203,6 @@ fn process_init_increment_proposal(
                 ),
                 &[proposer_account_info.clone(), rent_reserve_info.clone(), system_program_info.clone()]
             )?;
-            msg!("yaha aaya");
-            invoke_signed(
-                &spl_token_2022::instruction::mint_to(
-                    token_program_2022_info.key,
-                    governance_mint_info.key,
-                    proposer_token_account_info.key,
-                    fund_account_info.key,
-                    &[],
-                    1_510_000,
-                )?,
-                &[
-                    governance_mint_info.clone(),
-                    proposer_token_account_info.clone(),
-                    fund_account_info.clone(),
-                    token_program_2022_info.clone(),
-                ],
-                &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
-            )?;
-            msg!("yaha bhi aaya");
         }
         let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
         fund_data.expected_members = new_size;
@@ -2263,15 +2241,28 @@ fn process_init_increment_proposal(
         msg!("[FUND-ACTIVITY] {} {} Increment Proposal created with new size: {}", fund_account_info.key.to_string(), current_time, new_size);
     }
 
+    if refund_type == 0 {
+        invoke_signed(
+            &spl_token_2022::instruction::mint_to(
+                token_program_2022_info.key,
+                governance_mint_info.key,
+                proposer_token_account_info.key,
+                fund_account_info.key,
+                &[],
+                1_510_000,
+            )?,
+            &[
+                governance_mint_info.clone(),
+                proposer_token_account_info.clone(),
+                fund_account_info.clone(),
+                token_program_2022_info.clone(),
+            ],
+            &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
+        )?;
+    }
+
     Ok(())
 }
-
-// fn mint_governance(
-//     token_program_2022_info: &AccountInfo,
-//     governance_mint_info: &AccountInfo,
-//     proposer_token_account_info: &AccountInfo,
-//     fund_account_info: &AccountInfo
-// ) -> 
 
 fn process_toggle_refund_type(
     program_id: &Pubkey,

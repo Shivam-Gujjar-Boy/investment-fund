@@ -1481,7 +1481,7 @@ fn process_init_investment_proposal(
     );
 
     if *proposal_aggregator_info.key != proposal_aggregator_pda || *new_proposal_aggregator_info.key != new_proposal_aggregator_pda {
-        msg!("Proposal pds are invalid");
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidProposalAccount.into());
     }
 
@@ -1490,6 +1490,7 @@ fn process_init_investment_proposal(
         .take(amounts.len())
         .collect();
     if from_assets_info.len() != amounts.len() {
+        msg!("[FUND-ERROR] {} {} Wrong information of number of assets to trade of.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
     let from_assets_mints: Vec<Pubkey> = from_assets_info.iter().map(|m| *m.key).collect();
@@ -1499,6 +1500,7 @@ fn process_init_investment_proposal(
         .take(amounts.len())
         .collect();
     if to_assets_info.len() != amounts.len() {
+        msg!("[FUND-ERROR] {} {} Wrong information of number of assets to trade with.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
     let to_assets_mints: Vec<Pubkey> = to_assets_info.iter().map(|m| *m.key).collect();
@@ -1562,6 +1564,7 @@ fn process_init_investment_proposal(
         let new_vec_index = 0 as u16;
         let (new_vote_pda, new_vote_bump) = Pubkey::find_program_address(&[b"vote", &[current_index + 1], &new_vec_index.to_le_bytes(), fund_account_info.key.as_ref()], program_id);
         if *new_vote_account_info.key != new_vote_pda {
+            msg!("[FUND-ERROR] {} {} Invalid new vote account data.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
             return Err(FundError::InvalidVoteAccount.into());
         }
         if !new_vote_account_info.data_is_empty() {
@@ -1625,7 +1628,7 @@ fn process_init_investment_proposal(
             to_assets: to_assets_mints,
             amounts,
             slippages,
-            votes_yes: 0 as u64,
+            votes_yes: balance,
             votes_no: 0 as u64,
             creation_time,
             deadline,
@@ -1644,7 +1647,7 @@ fn process_init_investment_proposal(
             return Err(FundError::InvalidVoteAccount.into());
         }
 
-        let vote_space = 7 as usize;
+        let vote_space = 40 as usize;
         let vote_rent = rent.minimum_balance(vote_space);
         
         invoke_signed(
@@ -1659,7 +1662,7 @@ fn process_init_investment_proposal(
             &[&[b"vote", &[current_index], &vec_index.to_le_bytes(), fund_account_info.key.as_ref(), &[vote_bump]]]
         )?;
 
-        let voters: Vec<(Pubkey, u8)> = vec![];
+        let voters: Vec<(Pubkey, u8)> = vec![(*proposer_account_info.key, 1)];
 
         let vote_data = VoteAccount {
             proposal_index: current_index,

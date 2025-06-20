@@ -965,7 +965,7 @@ fn process_add_member<'a>(
     let total_voting_power = fund_data.total_deposit;
 
     if fund_data.expected_members <= fund_data.members.len() as u32 {
-        
+        msg!("[FUND-ERROR] {} {} Fund already has more member than expected members.", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::FundAlreadyFull.into());
     }
 
@@ -1003,7 +1003,7 @@ fn process_add_member<'a>(
 
     // Check if user already exists
     if fund_data.members.contains(member_account_info.key) {
-        msg!("User is already in the fund!");
+        msg!("[FUND-ERROR] {} {} User is already in the fund.", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1051,9 +1051,11 @@ fn process_add_member<'a>(
         let (join_proposal_pda, _join_proposal_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_pda.as_ref()], program_id);
         let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_pda.as_ref()], program_id);
         if *join_proposal_aggregator_info.key != join_proposal_pda {
+            msg!("[FUND-ERROR] {} {} Wrong join proposal information.", fund_account_info.key.to_string(), member_account_info.key.to_string());
             return Err(FundError::InvalidProposalAccount.into());
         }
         if *vote_account_info.key != vote_pda {
+            msg!("[FUND-ERROR] {} {} Wrong vote account information.", fund_account_info.key.to_string(), member_account_info.key.to_string());
             return Err(FundError::InvalidVoteAccount.into());
         }
 
@@ -1066,10 +1068,12 @@ fn process_add_member<'a>(
             .ok_or(FundError::InvalidAccountData)?;
 
         if proposal.joiner != *member_account_info.key {
+            msg!("[FUND-ERROR] {} {} Wrong proposer/joiner wallet.", fund_account_info.key.to_string(), member_account_info.key.to_string());
             return Err(FundError::InvalidAccountData.into());
         }
 
         if 2*(proposal.votes_yes) < total_voting_power {
+            msg!("[FUND-ERROR] {} {} Not enough votes to join the fund.", fund_account_info.key.to_string(), member_account_info.key.to_string());
             return Err(FundError::NotEnoughVotes.into());
         }
 
@@ -1117,6 +1121,7 @@ fn process_add_member<'a>(
         let fund_creator_info = next_account_info(accounts_iter)?;
 
         if *fund_creator_info.key != fund_data.members[0] {
+            msg!("[FUND-ERROR] {} {} Wrong fund creator.", fund_account_info.key.to_string(), member_account_info.key.to_string());
             return Err(FundError::InvalidFundCreator.into());
         }
 
@@ -1164,6 +1169,7 @@ fn process_init_deposit_token(
 
     // Depositor should be signer
     if !member_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -1172,6 +1178,7 @@ fn process_init_deposit_token(
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", member_account_info.key.as_ref()], program_id);
     let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
     if *vault_account_info.key != vault_pda || *fund_account_info.key != fund_pda || *user_account_info.key != user_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1181,6 +1188,7 @@ fn process_init_deposit_token(
         token_program_2022_info.key
     );
     if *governance_token_account_info.key != expected_ata {
+        msg!("[FUND-ERROR] {} {} Wrong governance token account information.", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::InvalidTokenAccount.into());
     }
 
@@ -1191,13 +1199,14 @@ fn process_init_deposit_token(
         .any(|member| *member == *member_account_info.key);
 
     if !is_depositer_member {
+        msg!("[FUND-ERROR] {} {} You are not a member of this fund and so cannot deposit in it.", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::NotAFundMember.into());
     }
 
     // If user doesn't exist in the fund, it can't deposit
     let mut user_data = UserAccount::try_from_slice(&user_account_info.data.borrow())?;
     if !user_data.funds.iter().any(|entry| entry.fund == *fund_account_info.key) {
-        msg!("User is not a member of the fund");
+        msg!("[FUND-ERROR] {} {} User is not a member of the fund.", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1225,7 +1234,6 @@ fn process_init_deposit_token(
 
     // If vault's token account account for the depositing mint doesn't exist, create it
     if vault_ata_info.data_is_empty() {
-        msg!("Creating Vault ATA...");
 
         invoke_signed(
             &create_associated_token_account(
@@ -1316,7 +1324,6 @@ fn process_init_deposit_token(
                ]
         )?;
     } else {
-        msg!("Transferring tokens...");
         // Now transfer the required number of tokens from depositor's token account to vault's token account
         invoke_signed(
             &spl_token::instruction::transfer(
@@ -1369,7 +1376,7 @@ fn process_init_deposit_token(
     if let Some(entry) = user_data.funds.iter_mut().find(|entry| entry.fund == *fund_account_info.key) {
         entry.governance_token_balance += mint_amount;
     } else {
-        msg!("Fund entry not found for user");
+        msg!("[FUND-ERROR] {} {} Fund entry not found for user.", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1398,9 +1405,13 @@ fn process_init_investment_proposal(
     let new_proposal_aggregator_info = next_account_info(accounts_iter)?; // new proposal aggregator account .....
     let vote_account_info = next_account_info(accounts_iter)?; // vote account 1 .................................
     let new_vote_account_info = next_account_info(accounts_iter)?; // vote account 2 .............................
+    let proposer_token_account_info = next_account_info(accounts_iter)?;// 
+    let governance_mint_info = next_account_info(accounts_iter)?;
+    let token_program_2022_info = next_account_info(accounts_iter)?;
 
     // Proposer needs to be signer
     if !proposer_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -1408,18 +1419,46 @@ fn process_init_investment_proposal(
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
     let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
 
+    let token_account = get_associated_token_address_with_program_id(
+        proposer_account_info.key,
+        governance_mint_info.key,
+        token_program_2022_info.key
+    );
+
+    if token_account != *proposer_token_account_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong governance token account information.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
+        return Err(FundError::InvalidTokenAccount.into());
+    }
+
+    if proposer_token_account_info.data_is_empty() {
+        msg!("[FUND-ERROR] {} {} Governance token account does not exists.", fund_account_info.key.to_string(), proposal_aggregator_info.key.to_string());
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let token_account_data = proposer_token_account_info.try_borrow_data()?;
+    let token_account = spl_token_2022::extension::StateWithExtensions::<spl_token_2022::state::Account>::unpack(&token_account_data)?;
+    let base_token_account = token_account.base;
+    let balance = base_token_account.amount;
+
+    if balance == 0 {
+        msg!("[FUND-ERROR] {} {} You have no voting power(contribution) in this fund.", fund_account_info.key.to_string(), proposal_aggregator_info.key.to_string());
+        return Err(FundError::NoVotingPower.into());
+    }
+
     let is_proposer_member = fund_data
         .members
         .iter()
         .any(|member| *member == *proposer_account_info.key);
 
     if !is_proposer_member {
+        msg!("[FUND-ERROR] {} {} You are not a member of this fund and so cannot create a proposal.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::NotAFundMember.into());
     }
 
     let current_index = fund_data.current_proposal_index;
 
     if *fund_account_info.key != fund_pda {
+        msg!("[FUND-ERROR] {} {} Wrong fund account information.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1501,7 +1540,7 @@ fn process_init_investment_proposal(
             to_assets: to_assets_mints,
             amounts,
             slippages,
-            votes_yes: 0 as u64,
+            votes_yes: balance,
             votes_no: 0 as u64,
             creation_time,
             deadline,
@@ -1530,7 +1569,7 @@ fn process_init_investment_proposal(
             return Err(FundError::InvalidVoteAccount.into());
         }
 
-        let vote_space = 7 as usize;
+        let vote_space = 40 as usize;
         let vote_rent = rent.minimum_balance(vote_space);
 
         invoke_signed(
@@ -1545,7 +1584,7 @@ fn process_init_investment_proposal(
             &[&[b"vote", &[current_index + 1], &new_vec_index.to_le_bytes(), fund_account_info.key.as_ref(), &[new_vote_bump]]]
         )?;
 
-        let new_voters_vec: Vec<(Pubkey, u8)> = vec![];
+        let new_voters_vec: Vec<(Pubkey, u8)> = vec![(*proposer_account_info.key, 1)];
         let new_vote_data = VoteAccount {
             proposal_index: current_index + 1,
             vec_index: new_vec_index,

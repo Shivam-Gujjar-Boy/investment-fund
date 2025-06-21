@@ -1568,7 +1568,7 @@ fn process_init_investment_proposal(
             return Err(FundError::InvalidVoteAccount.into());
         }
         if !new_vote_account_info.data_is_empty() {
-            msg!("Wrong Vote Account");
+            msg!("[FUND-ERROR] {} {} The vote account provided does not exist.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
             return Err(FundError::InvalidVoteAccount.into());
         }
 
@@ -1618,7 +1618,6 @@ fn process_init_investment_proposal(
         if num_of_proposals != 0 {
             vec_index = proposal_aggregator_data.proposals[num_of_proposals - 1].vec_index + 1;
         }
-        msg!("Vec Index: {}", vec_index);
 
         proposal_aggregator_info.realloc(new_aggregator_size, false)?;
         
@@ -1640,10 +1639,11 @@ fn process_init_investment_proposal(
 
         let (vote_pda, vote_bump) = Pubkey::find_program_address(&[b"vote", &[current_index], &vec_index.to_le_bytes(), fund_account_info.key.as_ref()], program_id);
         if *vote_account_info.key != vote_pda {
+            msg!("[FUND-ERROR] {} {} Invalid new vote account data.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
             return Err(FundError::InvalidVoteAccount.into());
         }
         if !vote_account_info.data_is_empty() {
-            msg!("Wrong Vote Account");
+            msg!("[FUND-ERROR] {} {} The vote account provided does not exist.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
             return Err(FundError::InvalidVoteAccount.into());
         }
 
@@ -1700,10 +1700,9 @@ fn process_vote_on_proposal(
     let token_program_2022_info = next_account_info(accounts_iter)?; // Token program extensions .................
     let proposer_account_info = next_account_info(accounts_iter)?; // Proposer Wallet ............................
 
-    msg!("Vec Index: {}", vec_index);
-
     // Voter needs to be signer
     if !voter_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -1723,6 +1722,7 @@ fn process_vote_on_proposal(
        *vote_account_info.key != vote_pda ||
        token_account != *voter_token_account_info.key ||
        *proposal_aggregator_info.key != proposal_aggregator_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1734,10 +1734,12 @@ fn process_vote_on_proposal(
         .any(|member| *member == *voter_account_info.key);
 
     if !is_voter_member {
+        msg!("[FUND-ERROR] {} {} You are not a member of the fund and so cannot vote.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::NotAFundMember.into());
     }
 
     if fund_data.governance_mint != *governance_token_mint_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong governance mint provided.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidGovernanceMint.into());
     }
 
@@ -1750,10 +1752,12 @@ fn process_vote_on_proposal(
         .ok_or(FundError::InvalidProposalAccount)?;
 
     if proposal.proposer != *proposer_account_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong proposer wallet provided.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidProposerInfo.into());
     }
 
     if proposal.deadline < current_time {
+        msg!("[FUND-ERROR] {} {} The deadline for voting is passed.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::VotingCeased.into());
     }
 
@@ -1765,16 +1769,17 @@ fn process_vote_on_proposal(
         .any(|(key, _)| *key == *voter_account_info.key);
 
     if voter_exists {
+        msg!("[FUND-ERROR] {} {} You have already voted for this proposal.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::AlreadyVoted.into());
     }
 
     if voter_token_account_info.data_is_empty() {
-        msg!("No Voting Power");
+        msg!("[FUND-ERROR] {} {} You have no voting power. Deposit assets to gain some.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::NoVotingPower.into());
     }
 
     if vote_account_info.data_is_empty() {
-        msg!("Vote account should be already created");
+        msg!("[FUND-ERROR] {} {} Vote account does not exists.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidVoteAccount.into());
     } else {
         let rent = Rent::get()?;
@@ -1806,7 +1811,7 @@ fn process_vote_on_proposal(
         let balance = base_token_account.amount;
 
         if balance == 0 {
-            msg!("No Voting Power");
+        msg!("[FUND-ERROR] {} {} You have no voting power. Deposit assets to gain some.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
             return Err(FundError::NoVotingPower.into());
         }
 
@@ -1842,6 +1847,7 @@ fn process_cancel_investment_proposal(
     let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve .................................
 
     if !proposer_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -1851,23 +1857,28 @@ fn process_cancel_investment_proposal(
     let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
     if *fund_account_info.key != fund_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidFundDetails.into());
     }
 
     if *proposal_aggregator_info.key != proposal_aggregator_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidProposalAccount.into());
     }
 
     if *vote_account_info.key != vote_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidVoteAccount.into());
     }
 
     if *rent_reserve_info.key != rent_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidRentAccount.into());
     }
 
     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     if proposal_index > fund_data.current_proposal_index {
+        msg!("[FUND-ERROR] {} {} Incorrect proposal aggregator account.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidProposalAccount.into());
     }
 
@@ -1879,10 +1890,12 @@ fn process_cancel_investment_proposal(
         .ok_or(FundError::InvalidProposalAccount)?;
 
     if proposal.proposer != *proposer_account_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong proposer wallet information.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidProposerInfo.into());
     }
 
     if proposal.deadline < current_time {
+        msg!("[FUND-ERROR] {} {} Cannot cancel proposal after the deadline is passed.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::DeadlineReached.into());
     }
 
@@ -1932,12 +1945,14 @@ fn process_init_rent_account(
     let god_father_info = next_account_info(accounts_iter)?;
 
     if !god_father_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", rent_account_info.key.to_string(), god_father_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
     let (rent_pda, rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
     if *rent_account_info.key != rent_pda {
+        msg!("[FUND-ERROR] {} {} Invalid rent account information.", rent_account_info.key.to_string(), god_father_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -1994,12 +2009,13 @@ fn process_execute_proposal(
     let rent_sysvar_info = next_account_info(account_iter)?; // rent sysvar account ...........................
 
     if !payer_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
     let (proposal_pda, _proposal_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index], fund_account_info.key.as_ref()], program_id);
     if *proposal_aggregator_info.key != proposal_pda {
-        msg!("Wrong proposal aggregator account");
+        msg!("[FUND-ERROR] {} {} Wrong proposal aggregator information provided.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidProposalAccount.into());
     }
 
@@ -2008,7 +2024,7 @@ fn process_execute_proposal(
 
     // if proposal is executed then return
     if is_executed {
-        msg!("Proposal already executed");
+        msg!("[FUND-ERROR] {} {} The proposal is already executed.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -2016,7 +2032,7 @@ fn process_execute_proposal(
 
     // if voting deadline hasn't reached yet, return
     if current_time <= deadline {
-        msg!("The proposal is still under voting.");
+        msg!("[FUND-ERROR] {} {} The proposal cannot be executed yet as the deadline hasn't been reached.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -2028,13 +2044,13 @@ fn process_execute_proposal(
 
     // if quorum not reached, error
     if (vote_yes + vote_no) < strength * 3 / 10 {
-        msg!("Quorum not reached");
+        msg!("[FUND-ERROR] {} {} Cannot execute as the quorum hasn't been reached yet.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidInstruction.into());
     }
 
     // if proposal not in majority, error
     if vote_yes <= vote_no {
-        msg!("Not enough votes favouring the trades");
+        msg!("[FUND-ERROR] {} {} Cannot execute as there are not enough votes favouring the trade.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidInstruction.into());
     }
 
@@ -2042,21 +2058,21 @@ fn process_execute_proposal(
     let input_token_mint_key = proposal_aggregator_data.proposals[vec_index as usize].from_assets[swap_number as usize];
     let output_token_mint_key = proposal_aggregator_data.proposals[vec_index as usize].to_assets[swap_number as usize];
     if input_token_mint_key != *input_token_mint.key || output_token_mint_key != *output_token_mint.key {
-        msg!("Wrong Mints");
+        msg!("[FUND-ERROR] {} {} Wrong mints provided.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidMints.into());
     }
 
     // check fund account
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
     if *fund_account_info.key != fund_pda || fund_pda != proposal_aggregator_data.fund {
-        msg!("Wrong Fund details");
+        msg!("[FUND-ERROR] {} {} Wrong fund details provided.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidFundDetails.into());
     }
 
     // verify vault account
     let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_pda.as_ref()], program_id);
     if *vault_account_info.key != vault_pda {
-        msg!("Wring vault account");
+        msg!("[FUND-ERROR] {} {} Wrong vote account information provided.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvaildVaultAccount.into());
     }
 
@@ -2073,6 +2089,7 @@ fn process_execute_proposal(
         &input_token_mint_key
     );
     if *input_token_account.key != input_vault_token_account || input_token_account.data_is_empty() {
+        msg!("[FUND-ERROR] {} {} Mismatch between your input token account and fund's input vault token account.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidTokenAccount.into());
     }
 
@@ -2081,12 +2098,12 @@ fn process_execute_proposal(
         &output_token_mint_key
     );
     if *output_token_account.key != output_vault_token_account {
+        msg!("[FUND-ERROR] {} {} Mismatch between your output(recieving) token account and fund's output vault token account.", fund_account_info.key.to_string(), payer_info.key.to_string());
         return Err(FundError::InvalidTokenAccount.into());
     }
 
     // if vault's output token account doesn't exist, create it
     if output_token_account.data_is_empty() {
-        msg!("Creating Vault ATA...");
 
         invoke_signed(
             &create_associated_token_account(
@@ -2113,7 +2130,6 @@ fn process_execute_proposal(
     let slippage = proposal_aggregator_data.proposals[vec_index as usize].slippages[swap_number as usize];
 
     let discriminator: &[u8] = &[0x2b, 0x04, 0xed, 0x0b, 0x1a, 0xc9, 0x1e, 0x62];
-    msg!("discriminator length: {}", discriminator.len());
     let min_amount_out = amount
         .checked_mul(10000u64 - (slippage as u64))
         .unwrap()
@@ -2205,6 +2221,7 @@ fn process_init_increment_proposal(
     let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ..................................
 
     if !proposer_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -2213,6 +2230,7 @@ fn process_init_increment_proposal(
     let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
     if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda || *rent_reserve_info.key != rent_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -2223,6 +2241,7 @@ fn process_init_increment_proposal(
     );
 
     if token_account != *proposer_token_account_info.key {
+        msg!("[FUND-ERROR] {} {} Invalid token account information provided.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidTokenAccount.into());
     }
 
@@ -2233,20 +2252,24 @@ fn process_init_increment_proposal(
     drop(token_account_data);
 
     if balance == 0 {
+        msg!("[FUND-ERROR] {} {} You cannot propose to increase members as you have no voting power.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::NoVotingPower.into());
     }
 
     if !increment_proposal_account_info.data_is_empty() {
+        msg!("[FUND-ERROR] {} {} A proposal for member increment already exists.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::IncrementProposalExists.into());
     }
 
     let total_deposit: u64 = {
         let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
         if new_size <= fund_data.expected_members {
+            msg!("[FUND-ERROR] {} {} The fund is has already more members than you listed.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
             return Err(FundError::InvalidNewSize.into());
         }
 
         if fund_data.expected_members as usize > fund_data.members.len() && !fund_data.is_refunded {
+            msg!("[FUND-ERROR] {} {} The fund still has vacant positions.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
             return Err(FundError::InvalidInstruction.into());
         }
 
@@ -2341,6 +2364,7 @@ fn process_toggle_refund_type(
     let proposer_token_account_info = next_account_info(accounts_iter)?;
 
     if !proposer_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -2348,11 +2372,13 @@ fn process_toggle_refund_type(
     let (increment_proposal_pda, _increment_proposal_bump) = Pubkey::find_program_address(&[b"increment-proposal-account", fund_account_info.key.as_ref()], program_id);
 
     if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
     let mut proposal_data = IncrementProposalAccount::try_from_slice(&increment_proposal_account_info.data.borrow())?;
     if proposal_data.proposer != *proposer_account_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong proposer wallet information provided.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidProposerInfo.into());
     }
 
@@ -2409,6 +2435,7 @@ fn process_vote_increment_proposal(
     let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ....................................
 
     if !voter_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -2417,6 +2444,7 @@ fn process_vote_increment_proposal(
     let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
     if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda || *rent_reserve_info.key != rent_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -2427,10 +2455,12 @@ fn process_vote_increment_proposal(
     );
 
     if token_account != *voter_token_account_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong governance token information provided.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidTokenAccount.into());
     }
 
     if voter_token_account_info.data_is_empty() {
+        msg!("[FUND-ERROR] {} {} You cannot vote as you have no voting power. Deposit assets to gain some.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::NoVotingPower.into());
     }
 
@@ -2440,6 +2470,7 @@ fn process_vote_increment_proposal(
     let balance = base_token_account.amount;
 
     if balance == 0 {
+        msg!("[FUND-ERROR] {} {} you have no voting power. Deposit assets to gain some.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::NoVotingPower.into());
     }
 
@@ -2450,10 +2481,12 @@ fn process_vote_increment_proposal(
         .any(|voter| voter.0 == *voter_account_info.key);
 
     if voter_exists {
+        msg!("[FUND-ERROR] {} {} You have already voted.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::AlreadyVoted.into());
     }
 
     if proposal_data.proposer != *proposer_account_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong proposer wallet information provided.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
         return Err(FundError::InvalidProposerInfo.into());
     }
 
@@ -2483,6 +2516,7 @@ fn process_vote_increment_proposal(
                 token_program_2022_info.key
             );
             if token_account != *proposer_token_account_info.key {
+                msg!("[FUND-ERROR] {} {} Wrong proposer token account information provided.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
                 return Err(FundError::InvalidTokenAccount.into());
             }
             **rent_reserve_info.lamports.borrow_mut() += lamports;
@@ -2548,6 +2582,7 @@ fn process_cancel_increment_proposal(
     let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ...................................
 
     if !proposer_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
@@ -2556,11 +2591,13 @@ fn process_cancel_increment_proposal(
     let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
     if *fund_account_info.key != fund_pda || *increment_proposal_account_info.key != increment_proposal_pda || *rent_reserve_info.key != rent_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
     let proposal_data = IncrementProposalAccount::try_from_slice(&increment_proposal_account_info.data.borrow())?;
     if proposal_data.proposer != *proposer_account_info.key {
+        msg!("[FUND-ERROR] {} {} Wrong proposer wallet information provided.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidProposerInfo.into());
     }
 

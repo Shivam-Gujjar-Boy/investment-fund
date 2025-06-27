@@ -2,6 +2,8 @@ use solana_program::program_error::ProgramError;
 
 #[derive(Debug)]
 pub enum FundError {
+    InvalidMemberInfo,
+    NotInvited,
     InstructionUnpackError,
     MissingRequiredSignature,
     InvalidAccountData,
@@ -29,6 +31,8 @@ pub enum FundError {
     FundAlreadyFull,
     InvalidNewSize,
     IncrementProposalExists,
+    InvalidInviter,
+    AlreadyInvited,
 }
 
 impl From<FundError> for ProgramError {

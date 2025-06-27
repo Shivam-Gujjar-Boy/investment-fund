@@ -2,6 +2,19 @@ use solana_program::pubkey::Pubkey;
 use borsh::{BorshSerialize, BorshDeserialize};
 
 #[derive(BorshSerialize, BorshDeserialize)]
+pub struct LightFundAccount {
+    pub name: [u8; 32],
+    pub creator_exists: bool,
+    pub total_deposit: u64,
+    pub vault: Pubkey,
+    pub current_proposal_index: u8,
+    pub created_at: i64,
+    pub tags: u32,
+    pub max_members: u8,
+    pub members: Vec<Pubkey>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
 pub struct FundAccount {
     pub name: [u8; 26],
     pub is_refunded: bool,
@@ -18,28 +31,27 @@ pub struct FundAccount {
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct VaultAccount {
-    pub fund: Pubkey,
     pub last_deposit_time: i64,
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct UserAccount {
-    pub user: Pubkey,
+    pub user_cid: [u8; 59],
     pub funds: Vec<UserSpecific>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, PartialEq)]
 pub struct UserSpecific {
     pub fund: Pubkey,
+    pub fund_type: u8,
     pub governance_token_balance: u64,
     pub is_pending: bool,
-    pub is_eligible: bool,
+    pub is_eligible: u8,
     pub join_time: i64
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct ProposalAggregatorAccount {
-    pub fund: Pubkey,
     pub index: u8,
     pub proposals: Vec<Proposal>,
 }
@@ -47,10 +59,7 @@ pub struct ProposalAggregatorAccount {
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Proposal {
     pub proposer: Pubkey,
-    pub from_assets: Vec<Pubkey>,
-    pub to_assets: Vec<Pubkey>,
-    pub amounts: Vec<u64>,
-    pub slippages: Vec<u16>,
+    pub cid: [u8; 59],
     pub votes_yes: u64,
     pub votes_no: u64,
     pub creation_time: i64,

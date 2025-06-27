@@ -50,7 +50,9 @@ pub enum FundInstruction {
     InitRentAccount { },
 
     // tag = 6
-    InitUserAccount { },
+    InitUserAccount { 
+        cid: String,
+    },
 
     // tag = 7
     InitDepositToken {
@@ -112,6 +114,30 @@ pub enum FundInstruction {
     ToggleRefundType {
         fund_name: String,
         refund_type: u8,
+    },
+
+    // tag = 18
+    InitLightFundAccount {
+        fund_name: String,
+        num_of_members: u8,
+        max_num_members: u8,
+        tags: u32,
+        add_members_later: u8,
+        fund_type: u8,
+        is_eligible: u8,
+    },
+
+    // tag = 19
+    HandleInvition {
+        fund_name: String,
+        response: u8,
+    },
+
+    // tag = 20
+    InviteToFund {
+        fund_name: String,
+        fund_type: u8,
+        is_eligible: u8,
     }
 
 }
@@ -120,7 +146,7 @@ impl FundInstruction {
     pub fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
         let (tag, rest) = input
             .split_first()
-            .ok_or(FundError::InstructionUnpackError)?;
+            .ok_or(FundError::InvaildVaultAccount)?;
 
         Ok(match tag {
             0 => {
@@ -192,7 +218,14 @@ impl FundInstruction {
                 Self::InitRentAccount {  }
             }
             6 => {
-                Self::InitUserAccount {  }
+                let (cid_bytes, _rest) = rest.split_at(59 as usize);
+                let cid_raw = cid_bytes
+                    .iter()
+                    .take_while(|&&b| b != 0)
+                    .cloned()
+                    .collect::<Vec<u8>>();
+                let cid = String::from_utf8(cid_raw).unwrap();
+                Self::InitUserAccount { cid }
             }
             7 => {
                 let (amount, rest) = Self::unpack_amount(rest)?;
@@ -263,6 +296,31 @@ impl FundInstruction {
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::ToggleRefundType { fund_name, refund_type }
+            }
+            18 => {
+                let (&fund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&is_eligible, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&add_members_later, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&num_of_members, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&max_num_members, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (tag_bytes, rest) = rest.split_at(4 as usize);
+                let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
+                let tags = u32::from_be_bytes(tag_bytes.try_into().expect("Invalid tags"));
+
+                Self::InitLightFundAccount { fund_name, num_of_members, max_num_members, tags, add_members_later, fund_type, is_eligible }
+            }
+            19 => {
+                let (&response, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+
+                Self::HandleInvition { fund_name, response }
+            }
+            20 => {
+                let (&fund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&is_eligible, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
+
+                Self::InviteToFund { fund_name, fund_type, is_eligible }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

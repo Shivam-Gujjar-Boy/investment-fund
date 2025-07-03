@@ -33,6 +33,8 @@ pub enum FundError {
     IncrementProposalExists,
     InvalidInviter,
     AlreadyInvited,
+    InvalidNumberOfWithdrawals,
+    InvalidStakePercent,
 }
 
 impl From<FundError> for ProgramError {

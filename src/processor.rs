@@ -47,9 +47,9 @@ pub fn process_instruction<'a>(
         //     process_add_member(program_id, accounts, fund_name, vec_index)
         // }
 
-        FundInstruction::InitDepositToken { amount, mint_amount, fund_name } => {
+        FundInstruction::InitDepositToken { amount, mint_amount, fund_name, fund_type } => {
             msg!("Instruction: Init Deposit Token");
-            process_init_deposit_token(program_id, accounts, amount, mint_amount, fund_name)
+            process_init_deposit_token(program_id, accounts, amount, mint_amount, fund_name, fund_type)
         }
 
         // FundInstruction::InitProposalInvestment { 
@@ -130,6 +130,11 @@ pub fn process_instruction<'a>(
         FundInstruction::InviteToFund { fund_name, fund_type, is_eligible } => {
             msg!("Instruction: Invite To Light Fund");
             process_invite_to_fund(program_id, accounts, fund_name, fund_type, is_eligible)
+        }
+
+        FundInstruction::WithdrawFromLightFund { fund_name, stake_percent, num_of_tokens } => {
+            msg!("Instruction: Withdraw from Light Fund");
+            process_withdraw_from_light_fund(program_id, accounts, fund_name, stake_percent, num_of_tokens)
         }
 
         _ => Err(FundError::InvalidInstruction.into()),
@@ -622,6 +627,117 @@ fn process_handle_invitation(
         fund_account_info.realloc(new_fund_size, false)?;
         fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
     }
+
+    Ok(())
+}
+
+fn process_withdraw_from_light_fund(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    fund_name: String,
+    stake_percent: u64,
+    num_of_tokens: u8,
+) -> ProgramResult {
+    // let current_time = Clock::get()?.unix_timestamp;
+
+    let accounts_iter = &mut accounts.iter();
+    let member_wallet_info = next_account_info(accounts_iter)?;
+    let member_account_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?;
+    let vault_account_info = next_account_info(accounts_iter)?;
+    let token_program_info = next_account_info(accounts_iter)?;
+
+    // if num_of_tokens > 7 {
+    //     return Err(FundError::InvalidNumberOfWithdrawals.into());
+    // }
+
+    msg!("Stake Percent: {}", stake_percent);
+
+    if stake_percent > 100_000_000_000 {
+        return Err(FundError::InvalidStakePercent.into());
+    }
+
+    if !member_wallet_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
+    let (member_pda, _joiner_bump) = Pubkey::find_program_address(&[b"user", member_wallet_info.key.as_ref()], program_id);
+    let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_account_info.key.as_ref()], program_id);
+
+    if *fund_account_info.key != fund_pda || *member_account_info.key != member_pda || *vault_account_info.key != vault_pda {
+        msg!("Accounts Issue");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let mut mint_account_infos: Vec<&AccountInfo> = vec![];
+    for _i in 0..num_of_tokens {
+        let mint_account_info = next_account_info(accounts_iter)?;
+        mint_account_infos.push(mint_account_info);
+    }
+
+    let mut member_ata_infos: Vec<&AccountInfo> = vec![];
+    for _i in 0..num_of_tokens {
+        let member_ata_info = next_account_info(accounts_iter)?;
+        member_ata_infos.push(member_ata_info);
+    }
+
+    let mut vault_ata_infos: Vec<&AccountInfo> = vec![];
+    for _i in 0..num_of_tokens {
+        let vault_ata_info = next_account_info(accounts_iter)?;
+        vault_ata_infos.push(vault_ata_info);
+    }
+
+    let mut member_data = UserAccount::try_from_slice(&member_account_info.data.borrow())?;
+    let mut fund_data = LightFundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+
+    let (matched_index, user_specific) = member_data
+        .funds
+        .iter()
+        .enumerate()
+        .find(|(_i, user_specific)| user_specific.fund == *fund_account_info.key)
+        .ok_or(FundError::InvalidAccountData)?;
+    msg!("User Specific Issue");
+
+    let member_deposit = user_specific.governance_token_balance;
+    let total_deposit = fund_data.total_deposit;
+
+    if member_deposit > total_deposit {
+        msg!("Amount Issue");
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let withdraw_percent = stake_percent*(member_deposit/total_deposit);
+
+    for i in 0..num_of_tokens {
+        let token_account = spl_token::state::Account::unpack(&vault_ata_infos[i as usize].data.borrow())?;
+        let vault_balance = token_account.amount;
+        let amount_to_transfer = (vault_balance * (withdraw_percent / 100))/1_000_000_000;
+        invoke_signed(
+            &spl_token::instruction::transfer(
+                token_program_info.key,
+                vault_ata_infos[i as usize].key,
+                member_ata_infos[i as usize].key,
+                vault_account_info.key,
+                &[],
+                amount_to_transfer
+            )?,
+            &[
+                token_program_info.clone(),
+                vault_ata_infos[i as usize].clone(),
+                member_ata_infos[i as usize].clone(),
+                vault_account_info.clone()
+            ],
+            &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
+        )?;
+    }
+
+    fund_data.total_deposit -= (fund_data.total_deposit * withdraw_percent)/100_000_000_000;
+    member_data.funds[matched_index].governance_token_balance -= (member_data.funds[matched_index].governance_token_balance * stake_percent)/100_000_000_000;
+    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+    member_data.serialize(&mut &mut member_account_info.data.borrow_mut()[..])?;
+
+    msg!("Transferred holdings successfully");
 
     Ok(())
 }
@@ -1656,6 +1772,7 @@ fn process_init_deposit_token(
     amount: u64,
     mint_amount: u64,
     fund_name: String,
+    fund_type: u8,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
@@ -1671,9 +1788,9 @@ fn process_init_deposit_token(
     let user_account_info = next_account_info(accounts_iter)?; // user global account ................................
     let system_program_info = next_account_info(accounts_iter)?; // System program ...................................
     let rent_sysvar_info = next_account_info(accounts_iter)?; // Rent Sysvar Account .................................
-    let governance_token_account_info = next_account_info(accounts_iter)?; // Governance Token Account of depositor ..
-    let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint Account .........................
-    let token_program_2022_info = next_account_info(accounts_iter)?; // token program 2022 ...........................
+    // let governance_token_account_info = next_account_info(accounts_iter)?; // Governance Token Account of depositor ..
+    // let governance_mint_info = next_account_info(accounts_iter)?; // Governance Mint Account .........................
+    // let token_program_2022_info = next_account_info(accounts_iter)?; // token program 2022 ...........................
 
     // Depositor should be signer
     if !member_account_info.is_signer {
@@ -1684,23 +1801,29 @@ fn process_init_deposit_token(
     // Derive the PDAs and check for equality with provided ones
     let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_account_info.key.as_ref()], program_id);
     let (user_pda, _user_bump) = Pubkey::find_program_address(&[b"user", member_account_info.key.as_ref()], program_id);
-    let (fund_pda, fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let mut seed = String::from("light-fund");
+    if fund_type == 1 {
+        seed = String::from("standard-fund");
+    } else if fund_type == 2 {
+        seed = String::from("dao-fund");
+    }
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[seed.as_bytes(), fund_name.as_bytes()], program_id);
     if *vault_account_info.key != vault_pda || *fund_account_info.key != fund_pda || *user_account_info.key != user_pda {
         msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), member_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
 
-    let expected_ata = spl_associated_token_account::get_associated_token_address_with_program_id(
-        member_account_info.key,
-        governance_mint_info.key,
-        token_program_2022_info.key
-    );
-    if *governance_token_account_info.key != expected_ata {
-        msg!("[FUND-ERROR] {} {} Wrong governance token account information.", fund_account_info.key.to_string(), member_account_info.key.to_string());
-        return Err(FundError::InvalidTokenAccount.into());
-    }
+    // let expected_ata = spl_associated_token_account::get_associated_token_address_with_program_id(
+    //     member_account_info.key,
+    //     governance_mint_info.key,
+    //     token_program_2022_info.key
+    // );
+    // if *governance_token_account_info.key != expected_ata {
+    //     msg!("[FUND-ERROR] {} {} Wrong governance token account information.", fund_account_info.key.to_string(), member_account_info.key.to_string());
+    //     return Err(FundError::InvalidTokenAccount.into());
+    // }
 
-    let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+    let mut fund_data = LightFundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     let is_depositer_member = fund_data
         .members
         .iter()
@@ -1719,23 +1842,23 @@ fn process_init_deposit_token(
     }
 
     // If depositor's governance token account doesn't exist, create one
-    if governance_token_account_info.data_is_empty() {
-        invoke(
-            &spl_associated_token_account::instruction::create_associated_token_account(
-                member_account_info.key,
-                member_account_info.key,
-                governance_mint_info.key,
-                token_program_2022_info.key,
-            ),
-            &[
-                member_account_info.clone(),
-                governance_token_account_info.clone(),
-                token_program_2022_info.clone(),
-                governance_mint_info.clone(),
-                rent_sysvar_info.clone(),
-            ]
-        )?;
-    }
+    // if governance_token_account_info.data_is_empty() {
+    //     invoke(
+    //         &spl_associated_token_account::instruction::create_associated_token_account(
+    //             member_account_info.key,
+    //             member_account_info.key,
+    //             governance_mint_info.key,
+    //             token_program_2022_info.key,
+    //         ),
+    //         &[
+    //             member_account_info.clone(),
+    //             governance_token_account_info.clone(),
+    //             token_program_2022_info.clone(),
+    //             governance_mint_info.clone(),
+    //             rent_sysvar_info.clone(),
+    //         ]
+    //     )?;
+    // }
 
     let rent = &Rent::from_account_info(rent_sysvar_info)?;
     let rent_req = rent.minimum_balance(TokenAccount::LEN);
@@ -1854,23 +1977,23 @@ fn process_init_deposit_token(
 
 
     // Now mint equivalent quantity of governance tokens to the depositor's governance token account
-    invoke_signed(
-        &spl_token_2022::instruction::mint_to(
-            token_program_2022_info.key,
-            governance_mint_info.key,
-            governance_token_account_info.key,
-            fund_account_info.key,
-            &[],
-            mint_amount,
-        )?,
-        &[
-            governance_mint_info.clone(),
-            governance_token_account_info.clone(),
-            fund_account_info.clone(),
-            token_program_2022_info.clone(),
-        ],
-        &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
-    )?;
+    // invoke_signed(
+    //     &spl_token_2022::instruction::mint_to(
+    //         token_program_2022_info.key,
+    //         governance_mint_info.key,
+    //         governance_token_account_info.key,
+    //         fund_account_info.key,
+    //         &[],
+    //         mint_amount,
+    //     )?,
+    //     &[
+    //         governance_mint_info.clone(),
+    //         governance_token_account_info.clone(),
+    //         fund_account_info.clone(),
+    //         token_program_2022_info.clone(),
+    //     ],
+    //     &[&[b"fund", fund_name.as_bytes(), &[fund_bump]]],
+    // )?;
 
     // In vault account, set the last deposit time
     let mut vault_data = VaultAccount::try_from_slice(&vault_account_info.data.borrow())?;

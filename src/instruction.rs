@@ -59,6 +59,7 @@ pub enum FundInstruction {
         amount: u64,
         mint_amount: u64,
         fund_name: String,
+        fund_type: u8,
     },
 
     // tag = 8
@@ -138,6 +139,13 @@ pub enum FundInstruction {
         fund_name: String,
         fund_type: u8,
         is_eligible: u8,
+    },
+
+    // tag = 21
+    WithdrawFromLightFund {
+        fund_name: String,
+        stake_percent: u64,
+        num_of_tokens: u8,
     }
 
 }
@@ -228,6 +236,7 @@ impl FundInstruction {
                 Self::InitUserAccount { cid }
             }
             7 => {
+                let (&fund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amount, rest) = Self::unpack_amount(rest)?;
                 let (mint_amount, rest) = Self::unpack_amount(rest)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
@@ -235,6 +244,7 @@ impl FundInstruction {
                     amount,
                     mint_amount,
                     fund_name,
+                    fund_type
                 }
             }
             8 => {
@@ -321,6 +331,14 @@ impl FundInstruction {
                 let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
 
                 Self::InviteToFund { fund_name, fund_type, is_eligible }
+            }
+            21 => {
+                let (&num_of_tokens, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (percent_bytes, rest) = rest.split_at(8);
+                let stake_percent = u64::from_le_bytes(percent_bytes.try_into().expect("Wrong Stake Percent"));
+                let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
+
+                Self::WithdrawFromLightFund { fund_name, stake_percent, num_of_tokens }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

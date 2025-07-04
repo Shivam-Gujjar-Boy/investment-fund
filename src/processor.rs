@@ -707,7 +707,7 @@ fn process_withdraw_from_light_fund(
         return Err(FundError::InvalidAccountData.into());
     }
 
-    let withdraw_percent = stake_percent*(member_deposit/total_deposit);
+    let withdraw_percent = (stake_percent*member_deposit)/total_deposit;
 
     for i in 0..num_of_tokens {
         let token_account = spl_token::state::Account::unpack(&vault_ata_infos[i as usize].data.borrow())?;

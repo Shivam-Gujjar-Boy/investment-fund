@@ -1,5 +1,5 @@
 // use std::io::Write;
-use std::{task, vec};
+use std::vec;
 use borsh::{BorshDeserialize, BorshSerialize};
 // use solana_program::instruction::{Instruction, AccountMeta};
 use solana_program::{pubkey, hash::hash};
@@ -649,7 +649,6 @@ fn process_withdraw_or_leave_from_light_fund(
     let token_program_info = next_account_info(accounts_iter)?;
     let system_program_info = next_account_info(accounts_iter)?;
     let rent_sysvar_info = next_account_info(accounts_iter)?;
-    let mint_account_info = next_account_info(accounts_iter)?;
 
     // if num_of_tokens > 7 {
     //     return Err(FundError::InvalidNumberOfWithdrawals.into());
@@ -720,26 +719,25 @@ fn process_withdraw_or_leave_from_light_fund(
     let rent = Rent::get()?;
     let rent_req = rent.minimum_balance(TokenAccount::LEN);
 
-
+    let wsol_mint = pubkey!("So11111111111111111111111111111111111111112");
 
     for i in 0..num_of_tokens {
         let token_account = spl_token::state::Account::unpack(&vault_ata_infos[i as usize].data.borrow())?;
         let vault_balance = token_account.amount;
         let amount_to_transfer = (vault_balance * (withdraw_percent / 100))/1_000_000_000;
 
-        if i == 0 {
-            let wsol_mint = pubkey!("So11111111111111111111111111111111111111112");
-            
+        if *mint_account_infos[i as usize].key == wsol_mint {
+
             invoke(
                 &system_instruction::create_account(
-                    member_account_info.key,
+                    member_wallet_info.key,
                     member_ata_infos[i as usize].key,
                     rent_req + amount_to_transfer,
                     TokenAccount::LEN as u64,
                     token_program_info.key,
                 ),
                 &[
-                    member_account_info.clone(),
+                    member_wallet_info.clone(),
                     member_ata_infos[i as usize].clone(),
                     token_program_info.clone(),
                     system_program_info.clone(),
@@ -751,14 +749,14 @@ fn process_withdraw_or_leave_from_light_fund(
                 &spl_token::instruction::initialize_account(
                     token_program_info.key,
                     member_ata_infos[i as usize].key,
-                    &wsol_mint,
-                    member_account_info.key,
+                    mint_account_infos[i as usize].key,
+                    member_wallet_info.key,
                 )?,
                 &[
                     token_program_info.clone(),
                     member_ata_infos[i as usize].clone(),
-                    mint_account_info.clone(), // wSOL mint info
-                    member_account_info.clone(),
+                    mint_account_infos[i as usize].clone(), // wSOL mint info
+                    member_wallet_info.clone(),
                     rent_sysvar_info.clone(),
                 ]
             )?;
@@ -786,12 +784,12 @@ fn process_withdraw_or_leave_from_light_fund(
                     token_program_info.key,
                     member_ata_infos[i as usize].key,
                     member_account_info.key,
-                    member_account_info.key,
+                    member_wallet_info.key,
                     &[]
                 )?,
                 &[
                     token_program_info.clone(),
-                    member_account_info.clone(),
+                    member_wallet_info.clone(),
                     member_ata_infos[i as usize].clone()
                 ]
             )?;
@@ -821,14 +819,16 @@ fn process_withdraw_or_leave_from_light_fund(
     if task == 1 {
         fund_data.members.retain(|member| member != member_wallet_info.key);
         member_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
-        let current_fund_size = fund_account_info.data_len();
-        let current_user_size = member_account_info.data_len();
-        let current_fund_rent = rent.minimum_balance(current_fund_size);
-        let current_user_rent = rent.minimum_balance(current_user_size);
 
+        let current_fund_size = fund_account_info.data_len();
         let new_fund_size = current_fund_size - 32;
-        let new_user_size = current_user_size - 32;
+        let current_fund_rent = fund_account_info.lamports();
         let new_fund_rent = rent.minimum_balance(new_fund_size);
+        
+
+        let current_user_size = member_account_info.data_len();
+        let new_user_size = current_user_size - 51;
+        let current_user_rent = member_account_info.lamports();
         let new_user_rent = rent.minimum_balance(new_user_size);
 
         fund_account_info.realloc(new_fund_size, false)?;

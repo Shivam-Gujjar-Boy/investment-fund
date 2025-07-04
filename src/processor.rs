@@ -1,5 +1,5 @@
 // use std::io::Write;
-use std::vec;
+use std::{task, vec};
 use borsh::{BorshDeserialize, BorshSerialize};
 // use solana_program::instruction::{Instruction, AccountMeta};
 use solana_program::{pubkey, hash::hash};
@@ -47,9 +47,9 @@ pub fn process_instruction<'a>(
         //     process_add_member(program_id, accounts, fund_name, vec_index)
         // }
 
-        FundInstruction::InitDepositToken { amount, mint_amount, fund_name, fund_type } => {
+        FundInstruction::InitDepositToken { is_unwrapped_sol, amount, mint_amount, fund_name, fund_type } => {
             msg!("Instruction: Init Deposit Token");
-            process_init_deposit_token(program_id, accounts, amount, mint_amount, fund_name, fund_type)
+            process_init_deposit_token(program_id, accounts,is_unwrapped_sol, amount, mint_amount, fund_name, fund_type)
         }
 
         // FundInstruction::InitProposalInvestment { 
@@ -132,9 +132,9 @@ pub fn process_instruction<'a>(
             process_invite_to_fund(program_id, accounts, fund_name, fund_type, is_eligible)
         }
 
-        FundInstruction::WithdrawFromLightFund { fund_name, stake_percent, num_of_tokens } => {
+        FundInstruction::WithdrawOrLeaveFromLightFund { fund_name, task, stake_percent, num_of_tokens } => {
             msg!("Instruction: Withdraw from Light Fund");
-            process_withdraw_from_light_fund(program_id, accounts, fund_name, stake_percent, num_of_tokens)
+            process_withdraw_or_leave_from_light_fund(program_id, accounts, fund_name, task, stake_percent, num_of_tokens)
         }
 
         _ => Err(FundError::InvalidInstruction.into()),
@@ -631,10 +631,11 @@ fn process_handle_invitation(
     Ok(())
 }
 
-fn process_withdraw_from_light_fund(
+fn process_withdraw_or_leave_from_light_fund(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     fund_name: String,
+    task: u8,
     stake_percent: u64,
     num_of_tokens: u8,
 ) -> ProgramResult {
@@ -646,6 +647,9 @@ fn process_withdraw_from_light_fund(
     let fund_account_info = next_account_info(accounts_iter)?;
     let vault_account_info = next_account_info(accounts_iter)?;
     let token_program_info = next_account_info(accounts_iter)?;
+    let system_program_info = next_account_info(accounts_iter)?;
+    let rent_sysvar_info = next_account_info(accounts_iter)?;
+    let mint_account_info = next_account_info(accounts_iter)?;
 
     // if num_of_tokens > 7 {
     //     return Err(FundError::InvalidNumberOfWithdrawals.into());
@@ -659,6 +663,11 @@ fn process_withdraw_from_light_fund(
 
     if !member_wallet_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    if task == 1 && stake_percent != 100_000_000_000 {
+        msg!("Task does not match the data provided.");
+        return Err(FundError::InvalidInstruction.into());
     }
 
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
@@ -706,34 +715,151 @@ fn process_withdraw_from_light_fund(
         msg!("Amount Issue");
         return Err(FundError::InvalidAccountData.into());
     }
-
+    
     let withdraw_percent = (stake_percent*member_deposit)/total_deposit;
+    let rent = Rent::get()?;
+    let rent_req = rent.minimum_balance(TokenAccount::LEN);
+
+
 
     for i in 0..num_of_tokens {
         let token_account = spl_token::state::Account::unpack(&vault_ata_infos[i as usize].data.borrow())?;
         let vault_balance = token_account.amount;
         let amount_to_transfer = (vault_balance * (withdraw_percent / 100))/1_000_000_000;
-        invoke_signed(
-            &spl_token::instruction::transfer(
-                token_program_info.key,
-                vault_ata_infos[i as usize].key,
-                member_ata_infos[i as usize].key,
-                vault_account_info.key,
-                &[],
-                amount_to_transfer
-            )?,
-            &[
-                token_program_info.clone(),
-                vault_ata_infos[i as usize].clone(),
-                member_ata_infos[i as usize].clone(),
-                vault_account_info.clone()
-            ],
-            &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
-        )?;
+
+        if i == 0 {
+            let wsol_mint = pubkey!("So11111111111111111111111111111111111111112");
+            
+            invoke(
+                &system_instruction::create_account(
+                    member_account_info.key,
+                    member_ata_infos[i as usize].key,
+                    rent_req + amount_to_transfer,
+                    TokenAccount::LEN as u64,
+                    token_program_info.key,
+                ),
+                &[
+                    member_account_info.clone(),
+                    member_ata_infos[i as usize].clone(),
+                    token_program_info.clone(),
+                    system_program_info.clone(),
+                    rent_sysvar_info.clone(),
+                ]
+            )?;
+
+            invoke(
+                &spl_token::instruction::initialize_account(
+                    token_program_info.key,
+                    member_ata_infos[i as usize].key,
+                    &wsol_mint,
+                    member_account_info.key,
+                )?,
+                &[
+                    token_program_info.clone(),
+                    member_ata_infos[i as usize].clone(),
+                    mint_account_info.clone(), // wSOL mint info
+                    member_account_info.clone(),
+                    rent_sysvar_info.clone(),
+                ]
+            )?;
+
+            invoke_signed(
+                &spl_token::instruction::transfer(
+                    token_program_info.key,
+                    vault_ata_infos[i as usize].key,
+                    member_ata_infos[i as usize].key,
+                    vault_account_info.key,
+                    &[],
+                    amount_to_transfer
+                )?,
+                &[
+                    token_program_info.clone(),
+                    vault_ata_infos[i as usize].clone(),
+                    member_ata_infos[i as usize].clone(),
+                    vault_account_info.clone()
+                ],
+                &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
+            )?;
+
+            invoke(
+                &spl_token::instruction::close_account(
+                    token_program_info.key,
+                    member_ata_infos[i as usize].key,
+                    member_account_info.key,
+                    member_account_info.key,
+                    &[]
+                )?,
+                &[
+                    token_program_info.clone(),
+                    member_account_info.clone(),
+                    member_ata_infos[i as usize].clone()
+                ]
+            )?;
+        } else {
+            invoke_signed(
+                &spl_token::instruction::transfer(
+                    token_program_info.key,
+                    vault_ata_infos[i as usize].key,
+                    member_ata_infos[i as usize].key,
+                    vault_account_info.key,
+                    &[],
+                    amount_to_transfer
+                )?,
+                &[
+                    token_program_info.clone(),
+                    vault_ata_infos[i as usize].clone(),
+                    member_ata_infos[i as usize].clone(),
+                    vault_account_info.clone()
+                ],
+                &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
+            )?;
+        }
     }
 
     fund_data.total_deposit -= (fund_data.total_deposit * withdraw_percent)/100_000_000_000;
-    member_data.funds[matched_index].governance_token_balance -= (member_data.funds[matched_index].governance_token_balance * stake_percent)/100_000_000_000;
+
+    if task == 1 {
+        fund_data.members.retain(|member| member != member_wallet_info.key);
+        member_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
+        let current_fund_size = fund_account_info.data_len();
+        let current_user_size = member_account_info.data_len();
+        let current_fund_rent = rent.minimum_balance(current_fund_size);
+        let current_user_rent = rent.minimum_balance(current_user_size);
+
+        let new_fund_size = current_fund_size - 32;
+        let new_user_size = current_user_size - 32;
+        let new_fund_rent = rent.minimum_balance(new_fund_size);
+        let new_user_rent = rent.minimum_balance(new_user_size);
+
+        fund_account_info.realloc(new_fund_size, false)?;
+        member_account_info.realloc(new_user_size, false)?;
+
+        if current_fund_rent > new_fund_rent  {
+            invoke(
+                &system_instruction::transfer(
+                    fund_account_info.key,
+                    member_wallet_info.key,
+                    current_fund_rent-new_fund_rent
+                ),
+                &[fund_account_info.clone(), member_account_info.clone()]
+            )?;           
+        }
+
+        if current_user_rent > new_user_rent  {
+            invoke(
+                &system_instruction::transfer(
+                    member_account_info.key,
+                    member_wallet_info.key,
+                    current_user_rent-new_user_rent
+                ),
+                &[member_account_info.clone(), member_account_info.clone()]
+            )?;           
+        }
+
+        
+    } else {
+        member_data.funds[matched_index].governance_token_balance -= (member_data.funds[matched_index].governance_token_balance * stake_percent)/100_000_000_000;
+    }
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
     member_data.serialize(&mut &mut member_account_info.data.borrow_mut()[..])?;
 
@@ -1769,6 +1895,7 @@ fn process_cancel_join_proposal(
 fn process_init_deposit_token(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
+    is_unwrapped_sol: u8,
     amount: u64,
     mint_amount: u64,
     fund_name: String,
@@ -1887,9 +2014,9 @@ fn process_init_deposit_token(
         )?;
     }
 
-    let mint: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
+    // let mint: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 
-    if *mint_account_info.key == mint {
+    if is_unwrapped_sol == 1 {
         invoke(
             &system_instruction::create_account(
                 member_account_info.key,

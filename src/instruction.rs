@@ -56,6 +56,7 @@ pub enum FundInstruction {
 
     // tag = 7
     InitDepositToken {
+        is_unwrapped_sol: u8,
         amount: u64,
         mint_amount: u64,
         fund_name: String,
@@ -142,8 +143,9 @@ pub enum FundInstruction {
     },
 
     // tag = 21
-    WithdrawFromLightFund {
+    WithdrawOrLeaveFromLightFund {
         fund_name: String,
+        task: u8,
         stake_percent: u64,
         num_of_tokens: u8,
     }
@@ -236,11 +238,13 @@ impl FundInstruction {
                 Self::InitUserAccount { cid }
             }
             7 => {
+                let (&is_unwrapped_sol, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (&fund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amount, rest) = Self::unpack_amount(rest)?;
                 let (mint_amount, rest) = Self::unpack_amount(rest)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 Self::InitDepositToken {
+                    is_unwrapped_sol,
                     amount,
                     mint_amount,
                     fund_name,
@@ -334,11 +338,12 @@ impl FundInstruction {
             }
             21 => {
                 let (&num_of_tokens, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&task, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (percent_bytes, rest) = rest.split_at(8);
                 let stake_percent = u64::from_le_bytes(percent_bytes.try_into().expect("Wrong Stake Percent"));
                 let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
 
-                Self::WithdrawFromLightFund { fund_name, stake_percent, num_of_tokens }
+                Self::WithdrawOrLeaveFromLightFund { fund_name, task, stake_percent, num_of_tokens }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

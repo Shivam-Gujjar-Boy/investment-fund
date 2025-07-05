@@ -648,6 +648,7 @@ fn process_withdraw_or_leave_from_light_fund(
     let vault_account_info = next_account_info(accounts_iter)?;
     let token_program_info = next_account_info(accounts_iter)?;
     let system_program_info = next_account_info(accounts_iter)?;
+    let ata_program_info = next_account_info(accounts_iter)?;
     let rent_sysvar_info = next_account_info(accounts_iter)?;
 
     // if num_of_tokens > 7 {
@@ -674,7 +675,6 @@ fn process_withdraw_or_leave_from_light_fund(
     let (vault_pda, vault_bump) = Pubkey::find_program_address(&[b"vault", fund_account_info.key.as_ref()], program_id);
 
     if *fund_account_info.key != fund_pda || *member_account_info.key != member_pda || *vault_account_info.key != vault_pda {
-        msg!("Accounts Issue");
         return Err(FundError::InvalidAccountData.into());
     }
 
@@ -705,61 +705,49 @@ fn process_withdraw_or_leave_from_light_fund(
         .enumerate()
         .find(|(_i, user_specific)| user_specific.fund == *fund_account_info.key)
         .ok_or(FundError::InvalidAccountData)?;
-    msg!("User Specific Issue");
 
     let member_deposit = user_specific.governance_token_balance;
     let total_deposit = fund_data.total_deposit;
 
     if member_deposit > total_deposit {
-        msg!("Amount Issue");
         return Err(FundError::InvalidAccountData.into());
     }
     
-    let withdraw_percent = (stake_percent*member_deposit)/total_deposit;
+    let withdraw_percent = ((((stake_percent as u128) * (member_deposit as u128)) as u128)/(total_deposit as u128)) as u64;
+    msg!("Withdraw percent overall: {}", withdraw_percent);
     let rent = Rent::get()?;
-    let rent_req = rent.minimum_balance(TokenAccount::LEN);
 
     let wsol_mint = pubkey!("So11111111111111111111111111111111111111112");
 
     for i in 0..num_of_tokens {
         let token_account = spl_token::state::Account::unpack(&vault_ata_infos[i as usize].data.borrow())?;
         let vault_balance = token_account.amount;
-        let amount_to_transfer = (vault_balance * (withdraw_percent / 100))/1_000_000_000;
+        let amount_to_transfer = (vault_balance * (withdraw_percent / 1_000_000_000))/100;
 
         if *mint_account_infos[i as usize].key == wsol_mint {
+            msg!("Bro SOL to hai ye");
 
-            invoke(
-                &system_instruction::create_account(
-                    member_wallet_info.key,
-                    member_ata_infos[i as usize].key,
-                    rent_req + amount_to_transfer,
-                    TokenAccount::LEN as u64,
-                    token_program_info.key,
-                ),
-                &[
-                    member_wallet_info.clone(),
-                    member_ata_infos[i as usize].clone(),
-                    token_program_info.clone(),
-                    system_program_info.clone(),
-                    rent_sysvar_info.clone(),
-                ]
-            )?;
+            if member_ata_infos[i as usize].data_is_empty() {
+                invoke(
+                    &spl_associated_token_account::instruction::create_associated_token_account(
+                        member_wallet_info.key,
+                        member_wallet_info.key,
+                        mint_account_infos[i as usize].key,
+                        token_program_info.key,
+                    ),
+                    &[
+                        member_wallet_info.clone(),
+                        member_ata_infos[i as usize].clone(),
+                        token_program_info.clone(),
+                        mint_account_infos[i as usize].clone(),
+                        system_program_info.clone(),
+                        ata_program_info.clone(),
+                        rent_sysvar_info.clone(),
+                    ]
+                )?;
+            }
 
-            invoke(
-                &spl_token::instruction::initialize_account(
-                    token_program_info.key,
-                    member_ata_infos[i as usize].key,
-                    mint_account_infos[i as usize].key,
-                    member_wallet_info.key,
-                )?,
-                &[
-                    token_program_info.clone(),
-                    member_ata_infos[i as usize].clone(),
-                    mint_account_infos[i as usize].clone(), // wSOL mint info
-                    member_wallet_info.clone(),
-                    rent_sysvar_info.clone(),
-                ]
-            )?;
+            msg!("Bhai create to ha rha hai");
 
             invoke_signed(
                 &spl_token::instruction::transfer(
@@ -783,17 +771,42 @@ fn process_withdraw_or_leave_from_light_fund(
                 &spl_token::instruction::close_account(
                     token_program_info.key,
                     member_ata_infos[i as usize].key,
-                    member_account_info.key,
+                    member_wallet_info.key,
                     member_wallet_info.key,
                     &[]
                 )?,
                 &[
                     token_program_info.clone(),
                     member_wallet_info.clone(),
-                    member_ata_infos[i as usize].clone()
+                    member_ata_infos[i as usize].clone(),
+                    system_program_info.clone(),
+                    ata_program_info.clone(),
+                    rent_sysvar_info.clone()
                 ]
             )?;
         } else {
+            msg!("Bro SOL na hai ye");
+
+            if member_ata_infos[i as usize].data_is_empty() {
+                invoke(
+                    &spl_associated_token_account::instruction::create_associated_token_account(
+                        member_wallet_info.key,
+                        member_wallet_info.key,
+                        mint_account_infos[i as usize].key,
+                        token_program_info.key,
+                    ),
+                    &[
+                        member_wallet_info.clone(),
+                        member_ata_infos[i as usize].clone(),
+                        token_program_info.clone(),
+                        mint_account_infos[i as usize].clone(),
+                        system_program_info.clone(),
+                        ata_program_info.clone(),
+                        rent_sysvar_info.clone(),
+                    ]
+                )?;
+            }
+
             invoke_signed(
                 &spl_token::instruction::transfer(
                     token_program_info.key,
@@ -814,7 +827,8 @@ fn process_withdraw_or_leave_from_light_fund(
         }
     }
 
-    fund_data.total_deposit -= (fund_data.total_deposit * withdraw_percent)/100_000_000_000;
+    fund_data.total_deposit -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000_000 as u128)) as u64;
+    msg!("Fund's Total Deposit: {}", fund_data.total_deposit);
 
     if task == 1 {
         fund_data.members.retain(|member| member != member_wallet_info.key);
@@ -835,30 +849,17 @@ fn process_withdraw_or_leave_from_light_fund(
         member_account_info.realloc(new_user_size, false)?;
 
         if current_fund_rent > new_fund_rent  {
-            invoke(
-                &system_instruction::transfer(
-                    fund_account_info.key,
-                    member_wallet_info.key,
-                    current_fund_rent-new_fund_rent
-                ),
-                &[fund_account_info.clone(), member_account_info.clone()]
-            )?;           
+            **fund_account_info.lamports.borrow_mut() -= current_fund_rent-new_fund_rent;
+            **member_wallet_info.lamports.borrow_mut() += current_fund_rent-new_fund_rent;
         }
 
         if current_user_rent > new_user_rent  {
-            invoke(
-                &system_instruction::transfer(
-                    member_account_info.key,
-                    member_wallet_info.key,
-                    current_user_rent-new_user_rent
-                ),
-                &[member_account_info.clone(), member_account_info.clone()]
-            )?;           
+            **member_account_info.lamports.borrow_mut() -= current_user_rent-new_user_rent;
+            **member_wallet_info.lamports.borrow_mut() += current_user_rent-new_user_rent;
         }
-
-        
     } else {
-        member_data.funds[matched_index].governance_token_balance -= (member_data.funds[matched_index].governance_token_balance * stake_percent)/100_000_000_000;
+        member_data.funds[matched_index].governance_token_balance -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000_000 as u128)) as u64;
+        msg!("Member Deposit After Withdrawal: {}", member_data.funds[matched_index].governance_token_balance);
     }
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
     member_data.serialize(&mut &mut member_account_info.data.borrow_mut()[..])?;

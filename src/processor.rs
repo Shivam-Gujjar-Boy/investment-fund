@@ -2146,6 +2146,91 @@ fn process_init_deposit_token(
     Ok(())
 }
 
+fn process_init_light_proposal(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amounts: Vec<u64>,
+    slippages: Vec<u16>,
+    deadline: i64,
+    fund_name: String,
+    cid: String,
+) -> ProgramResult {
+    let creation_time = Clock::get()?.unix_timestamp;
+
+    let accounts_iter = &mut accounts.iter();
+    let proposer_account_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?;
+    let proposal_aggregator_info = next_account_info(accounts_iter)?;
+    let sysyem_program_info = next_account_info(accounts_iter)?;
+    let new_proposal_aggregator_info = next_account_info(accounts_iter)?;
+
+    if !proposer_account_info.is_signer {
+        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+
+    let is_proposer_member = fund_data
+        .members
+        .iter()
+        .any(|member| *member == *proposer_account_info.key);
+
+    if !is_proposer_member {
+        msg!("[FUND-ERROR] {} {} You are not a member of this fund and so cannot create a proposal.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
+        return Err(FundError::NotAFundMember.into());
+    }
+
+    let current_index = fund_data.current_proposal_index;
+
+    if *fund_account_info.key != fund_pda {
+        msg!("[FUND-ERROR] {} {} Wrong fund account information.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let (proposal_aggregator_pda, _proposal_aggregator_bump) = Pubkey::find_program_address(
+        &[
+            b"proposal-aggregator",
+            &[current_index],
+            fund_pda.as_ref()
+        ],
+        program_id
+    );
+
+    let (new_proposal_aggregator_pda, new_proposal_aggregator_bump) = Pubkey::find_program_address(
+        &[
+            b"proposal-aggregator",
+            &[current_index + 1],
+            fund_pda.as_ref()
+        ],
+        program_id
+    );
+
+    if *proposal_aggregator_info.key != proposal_aggregator_pda || *new_proposal_aggregator_info.key != new_proposal_aggregator_pda {
+        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
+        return Err(FundError::InvalidProposalAccount.into());
+    }
+
+    let bytes = cid.as_bytes();
+    let mut array = [0u8; 59];
+    let len = bytes.len().min(59);
+    array[..len].copy_from_slice(&bytes[..len]);
+
+    // Rent Calculation
+    let rent = Rent::get()?;
+    let current_proposal_space = proposal_aggregator_info.data_len();
+    let extra_proposal_space = 110 as usize;
+
+    if  {
+        
+    }
+
+
+
+    Ok(())
+}
+
 // fn process_init_investment_proposal(
 //     program_id: &Pubkey,
 //     accounts: &[AccountInfo],

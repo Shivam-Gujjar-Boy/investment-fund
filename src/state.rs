@@ -62,8 +62,6 @@ pub struct Proposal {
     pub cid: [u8; 59],
     pub votes_yes: u64,
     pub votes_no: u64,
-    pub creation_time: i64,
-    pub deadline: i64,
     pub executed: bool,
     pub vec_index: u16,
 }

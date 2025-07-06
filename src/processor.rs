@@ -2144,8 +2144,6 @@ fn process_init_deposit_token(
 }
 
 
-
-
 fn process_init_investment_proposal(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -2425,8 +2423,6 @@ fn process_vote_on_proposal(
 
     Ok(())
 }
-
-
 
 
 // fn process_init_investment_proposal(

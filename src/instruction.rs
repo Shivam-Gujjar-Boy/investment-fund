@@ -124,8 +124,6 @@ pub enum FundInstruction {
         max_num_members: u8,
         tags: u32,
         add_members_later: u8,
-        fund_type: u8,
-        is_eligible: u8,
     },
 
     // tag = 19
@@ -138,8 +136,6 @@ pub enum FundInstruction {
     // tag = 20
     InviteToFund {
         fund_name: String,
-        fund_type: u8,
-        is_eligible: u8,
     },
 
     // tag = 21
@@ -315,8 +311,6 @@ impl FundInstruction {
                 Self::ToggleRefundType { fund_name, refund_type }
             }
             18 => {
-                let (&fund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (&is_eligible, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (&add_members_later, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (&num_of_members, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (&max_num_members, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
@@ -324,7 +318,7 @@ impl FundInstruction {
                 let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
                 let tags = u32::from_be_bytes(tag_bytes.try_into().expect("Invalid tags"));
 
-                Self::InitLightFundAccount { fund_name, num_of_members, max_num_members, tags, add_members_later, fund_type, is_eligible }
+                Self::InitLightFundAccount { fund_name, num_of_members, max_num_members, tags, add_members_later }
             }
             19 => {
                 let (&response, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
@@ -334,11 +328,9 @@ impl FundInstruction {
                 Self::HandleInvition { fund_name, response, inviter_exists }
             }
             20 => {
-                let (&fund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (&is_eligible, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
 
-                Self::InviteToFund { fund_name, fund_type, is_eligible }
+                Self::InviteToFund { fund_name }
             }
             21 => {
                 let (&num_of_tokens, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;

@@ -112,9 +112,9 @@ pub fn process_instruction<'a>(
             process_toggle_refund_type(program_id, accounts, fund_name, refund_type)
         }
 
-        FundInstruction::InitLightFundAccount { fund_name, num_of_members, max_num_members, tags, add_members_later, fund_type, is_eligible } => {
+        FundInstruction::InitLightFundAccount { fund_name, num_of_members, max_num_members, tags, add_members_later } => {
             msg!("Instruction: Init Light Fund Account");
-            process_init_light_fund(program_id, accounts, fund_name, num_of_members, tags, add_members_later, max_num_members, fund_type, is_eligible)
+            process_init_light_fund(program_id, accounts, fund_name, num_of_members, tags, add_members_later, max_num_members)
         }
 
         FundInstruction::HandleInvition { fund_name, response, inviter_exists } => {
@@ -122,9 +122,9 @@ pub fn process_instruction<'a>(
             process_handle_invitation(program_id, accounts, fund_name, response, inviter_exists)
         }
 
-        FundInstruction::InviteToFund { fund_name, fund_type, is_eligible } => {
+        FundInstruction::InviteToFund { fund_name } => {
             msg!("Instruction: Invite To Light Fund");
-            process_invite_to_fund(program_id, accounts, fund_name, fund_type, is_eligible)
+            process_invite_to_fund(program_id, accounts, fund_name)
         }
 
         FundInstruction::WithdrawOrLeaveFromLightFund { fund_name, task, stake_percent, num_of_tokens } => {
@@ -144,8 +144,6 @@ fn process_init_light_fund(
     tags: u32,
     add_members_later: u8,
     max_num_members: u8,
-    fund_type: u8,
-    is_eligible: u8,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
@@ -341,10 +339,10 @@ fn process_init_light_fund(
         let mut pda_data = UserAccount::try_from_slice(&member_pda_info.data.borrow())?;
         pda_data.funds.push(UserSpecific {
             fund: *fund_account_info.key,
-            fund_type,
+            fund_type: 0 as u8,
             governance_token_balance: 0 as u64,
             is_pending: true,
-            is_eligible,
+            is_eligible: 1 as u8,
             inviter_index: 0 as u32,
             join_time: current_time
         });
@@ -377,8 +375,6 @@ fn process_invite_to_fund(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     fund_name: String,
-    fund_type: u8,
-    is_eligible: u8,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
@@ -430,10 +426,10 @@ fn process_invite_to_fund(
 
     joiner_data.funds.push(UserSpecific {
         fund: *fund_account_info.key,
-        fund_type,
+        fund_type: 0 as u8,
         governance_token_balance: 0 as u64,
         is_pending: true,
-        is_eligible,
+        is_eligible: 1 as u8,
         inviter_index,
         join_time: current_time
     });
@@ -2422,7 +2418,7 @@ fn process_vote_on_proposal(
         )?;
     }
 
-    proposal_aggregator_info.realloc(new_proposal_rent, false)?;
+    proposal_aggregator_info.realloc(new_proposal_space, false)?;
     proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
 
     msg!("[FUND-ACTIVITY] {} {} {} Vote: {} on proposal ({}, {})", fund_account_info.key.to_string(), current_time, fund_name, voter_account_info.key.to_string(), proposal_index, vec_index);

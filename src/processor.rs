@@ -649,7 +649,7 @@ fn process_withdraw_or_leave_from_light_fund(
 
     msg!("Stake Percent: {}", stake_percent);
 
-    if stake_percent > 100_000_000_000 {
+    if stake_percent > 100_000_000 {
         return Err(FundError::InvalidStakePercent.into());
     }
 
@@ -657,7 +657,7 @@ fn process_withdraw_or_leave_from_light_fund(
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    if task == 1 && stake_percent != 100_000_000_000 {
+    if task == 1 && stake_percent != 100_000_000 {
         msg!("Task does not match the data provided.");
         return Err(FundError::InvalidInstruction.into());
     }
@@ -707,7 +707,7 @@ fn process_withdraw_or_leave_from_light_fund(
 
     let rent = Rent::get()?;
     
-    fund_data.total_deposit -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000_000 as u128)) as u64;
+    fund_data.total_deposit -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000 as u128)) as u64;
     msg!("Fund's Total Deposit: {}", fund_data.total_deposit);
 
     if task == 1 {
@@ -738,7 +738,7 @@ fn process_withdraw_or_leave_from_light_fund(
             **member_wallet_info.lamports.borrow_mut() += current_user_rent - new_user_rent;
         }
     } else {
-        member_data.funds[matched_index].governance_token_balance -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000_000 as u128)) as u64;
+        member_data.funds[matched_index].governance_token_balance -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000 as u128)) as u64;
         msg!("Member Deposit After Withdrawal: {}", member_data.funds[matched_index].governance_token_balance);
     }
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
@@ -756,7 +756,7 @@ fn process_withdraw_or_leave_from_light_fund(
     for i in 0..num_of_tokens {
         let token_account = spl_token::state::Account::unpack(&vault_ata_infos[i as usize].data.borrow())?;
         let vault_balance = token_account.amount;
-        let amount_to_transfer = (vault_balance * (withdraw_percent / 1_000_000_000))/100;
+        let amount_to_transfer = (vault_balance * (withdraw_percent / 1_000_000))/100;
 
         if *mint_account_infos[i as usize].key == wsol_mint {
             msg!("Bro SOL to hai ye");

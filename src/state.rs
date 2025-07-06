@@ -4,6 +4,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct LightFundAccount {
     pub name: [u8; 32],
+    pub fund_type: u8,
     pub creator_exists: bool,
     pub total_deposit: u64,
     pub vault: Pubkey,
@@ -61,13 +62,13 @@ pub struct ProposalAggregatorAccount {
 pub struct Proposal {
     pub proposer: Pubkey,
     pub cid: [u8; 59],
-    pub voters_bitmap: (u32, u32),
     pub votes_yes: u64,
     pub votes_no: u64,
     pub creation_time: i64,
     pub deadline: i64,
     pub executed: bool,
     pub vec_index: u16,
+    pub voters_bitmap: Vec<(u32, u8)>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]

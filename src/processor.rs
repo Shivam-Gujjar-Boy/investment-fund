@@ -189,7 +189,7 @@ fn process_init_light_fund(
     }
 
     let rent = Rent::get()?;
-    let fund_space = 127 as usize;
+    let fund_space = 128 as usize;
     let vault_space = 8 as usize;
     let aggregator_space = 5 as usize;
     
@@ -245,6 +245,7 @@ fn process_init_light_fund(
 
     let fund_data = LightFundAccount {
         name: array,
+        fund_type: 0 as u8,
         creator_exists: true,
         total_deposit: 0 as u64,
         vault: *vault_account_info.key,
@@ -284,7 +285,7 @@ fn process_init_light_fund(
     });
 
     let current_creator_space = creator_account_info.data_len();
-    let new_creator_space = current_creator_space + 51;
+    let new_creator_space = current_creator_space + 55;
     let current_creator_rent = creator_account_info.lamports();
     let new_creator_rent = rent.minimum_balance(new_creator_space);
 
@@ -349,7 +350,7 @@ fn process_init_light_fund(
         });
         
         let current_user_size = member_pda_info.data_len();
-        let new_user_size = current_user_size + 51;
+        let new_user_size = current_user_size + 55;
         let current_user_rent = member_pda_info.lamports();
         let new_user_rent = rent.minimum_balance(new_user_size);
 
@@ -439,7 +440,7 @@ fn process_invite_to_fund(
 
     let rent = Rent::get()?;
     let current_joiner_space = joiner_account_info.data_len();
-    let new_joiner_space = current_joiner_space + 51;
+    let new_joiner_space = current_joiner_space + 55;
     let current_joiner_rent = joiner_account_info.lamports();
     let new_joiner_rent = rent.minimum_balance(new_joiner_space);
 
@@ -527,7 +528,7 @@ fn process_handle_invitation(
         if response == 0 {
             joiner_data.funds.retain(|fund| fund.fund != *fund_account_info.key);
             let current_joiner_space = joiner_account_info.data_len();
-            let new_joiner_space = current_joiner_space - 51;
+            let new_joiner_space = current_joiner_space - 55;
             let current_joiner_rent = joiner_account_info.lamports();
             let new_joiner_rent = rent.minimum_balance(new_joiner_space);
 
@@ -553,7 +554,7 @@ fn process_handle_invitation(
             joiner_data.serialize(&mut &mut joiner_account_info.data.borrow_mut()[..])?;
 
             let x = rent.minimum_balance(0 as usize);
-            let y = rent.minimum_balance(51 as usize);
+            let y = rent.minimum_balance(55 as usize);
             invoke(
                 &system_instruction::transfer(
                     joiner_wallet_info.key,
@@ -567,7 +568,7 @@ fn process_handle_invitation(
         if response == 0 {
             joiner_data.funds.retain(|fund| fund.fund != *fund_account_info.key);
             let current_joiner_space = joiner_account_info.data_len();
-            let new_joiner_space = current_joiner_space - 51;
+            let new_joiner_space = current_joiner_space - 55;
             let current_joiner_rent = joiner_account_info.lamports();
             let new_joiner_rent = rent.minimum_balance(new_joiner_space);
 
@@ -593,7 +594,7 @@ fn process_handle_invitation(
             joiner_data.serialize(&mut &mut joiner_account_info.data.borrow_mut()[..])?;
 
             let x = rent.minimum_balance(0 as usize);
-            let y = rent.minimum_balance(51 as usize);
+            let y = rent.minimum_balance(55 as usize);
             invoke(
                 &system_instruction::transfer(
                     joiner_wallet_info.key,
@@ -724,7 +725,7 @@ fn process_withdraw_or_leave_from_light_fund(
         
 
         let current_user_size = member_account_info.data_len();
-        let new_user_size = current_user_size - 51;
+        let new_user_size = current_user_size - 55;
         let current_user_rent = member_account_info.lamports();
         let new_user_rent = rent.minimum_balance(new_user_size);
 
@@ -2216,11 +2217,11 @@ fn process_init_investment_proposal(
     // Rent Calculation
     let rent = Rent::get()?;
     let current_proposal_space = proposal_aggregator_info.data_len();
-    let extra_proposal_space = 118 as usize;
+    let extra_proposal_space = 135 as usize;
 
     let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
 
-    let mut voters_bitmap: (u32, u32) = (0, 0);
+    let mut voters_bitmap: Vec<(u32, u8)> = vec![];
     let proposer_info = fund_data
         .members
         .iter()
@@ -2229,8 +2230,7 @@ fn process_init_investment_proposal(
 
     let proposer_vec_index = proposer_info.1;
 
-    voters_bitmap.0 = voters_bitmap.0 | ((1 as u32) << (proposer_vec_index));
-    voters_bitmap.1 = voters_bitmap.1 | ((1 as u32) << (proposer_vec_index));
+    voters_bitmap.push((proposer_vec_index, 1));
 
     let bytes = cid.as_bytes();
     let mut array = [0u8; 59];
@@ -2264,13 +2264,13 @@ fn process_init_investment_proposal(
         let proposals_vec: Vec<Proposal> = vec![ Proposal {
             proposer: *proposer_account_info.key,
             cid: array,
-            voters_bitmap,
             votes_yes: 1 as u64,
             votes_no: 0 as u64,
             creation_time,
             deadline,
             executed: false,
-            vec_index: 0 as u16
+            vec_index: 0 as u16,
+            voters_bitmap,
         }];
 
         let new_proposal_data = ProposalAggregatorAccount {
@@ -2312,13 +2312,13 @@ fn process_init_investment_proposal(
         proposal_aggregator_data.proposals.push( Proposal {
             proposer: *proposer_account_info.key,
             cid: array,
-            voters_bitmap,
             votes_yes: 1 as u64,
             votes_no: 0 as u64,
             creation_time,
             deadline,
             executed: false,
-            vec_index
+            vec_index,
+            voters_bitmap,
         });
 
         proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
@@ -2345,6 +2345,7 @@ fn process_vote_on_proposal(
     let proposal_aggregator_info = next_account_info(accounts_iter)?; // Proposal account ........................
     let fund_account_info = next_account_info(accounts_iter)?; // fund Account ...................................
     let proposer_account_info = next_account_info(accounts_iter)?; // Proposer Wallet ............................
+    let system_program_info = next_account_info(accounts_iter)?; // System Program ...............................
 
     msg!("Vec Index: {}", vec_index);
 
@@ -2398,12 +2399,31 @@ fn process_vote_on_proposal(
         return Err(FundError::VotingCeased.into());
     }
 
-    if (proposal_aggregator_data.proposals[matched_index].voters_bitmap.0 & (1 << voter_vec_index)) == 1 {
+    if proposal_aggregator_data.proposals[matched_index].voters_bitmap.iter().any(|voter| voter.0 == voter_vec_index) {
         return Err(FundError::AlreadyVoted.into());
     }
 
-    proposal_aggregator_data.proposals[matched_index].voters_bitmap.0 |= 1 << voter_vec_index;
-    proposal_aggregator_data.proposals[matched_index].voters_bitmap.1 |= (vote as u32) << voter_vec_index;
+    proposal_aggregator_data.proposals[matched_index].voters_bitmap.push((voter_vec_index, vote));
+
+    let rent = Rent::get()?;
+    let current_aggregator_space = proposal_aggregator_info.data_len();
+    let new_proposal_space = current_aggregator_space + 5;
+    let current_proposal_rent = proposal_aggregator_info.lamports();
+    let new_proposal_rent = rent.minimum_balance(new_proposal_space);
+
+    if new_proposal_rent > current_proposal_rent {
+        invoke(
+            &system_instruction::transfer(
+                voter_account_info.key,
+                proposal_aggregator_info.key,
+                new_proposal_rent - current_proposal_rent
+            ),
+            &[voter_account_info.clone(), proposal_aggregator_info.clone(), system_program_info.clone()]
+        )?;
+    }
+
+    proposal_aggregator_info.realloc(new_proposal_rent, false)?;
+    proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
 
     msg!("[FUND-ACTIVITY] {} {} {} Vote: {} on proposal ({}, {})", fund_account_info.key.to_string(), current_time, fund_name, voter_account_info.key.to_string(), proposal_index, vec_index);
 

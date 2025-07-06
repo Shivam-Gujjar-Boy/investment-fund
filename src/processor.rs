@@ -2,7 +2,7 @@
 use std::vec;
 use borsh::{BorshDeserialize, BorshSerialize};
 // use solana_program::instruction::{Instruction, AccountMeta};
-use solana_program::{pubkey, hash::hash};
+use solana_program::pubkey;
 use solana_program::{
     account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey:: Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar}
 };
@@ -15,7 +15,7 @@ use spl_associated_token_account::instruction::create_associated_token_account;
 // };
 // use spl_token_metadata_interface;
 // use spl_token_2022::state::Mint;
-use crate::state::{IncrementProposalAccount, JoinProposalAggregator, JoinVoteAccount, LightFundAccount, UserSpecific};
+use crate::state::{IncrementProposalAccount, LightFundAccount, UserSpecific};
 use crate::{
     errors::FundError,
     instruction::FundInstruction,
@@ -52,20 +52,15 @@ pub fn process_instruction<'a>(
             process_init_deposit_token(program_id, accounts,is_unwrapped_sol, amount, mint_amount, fund_name, fund_type)
         }
 
-        // FundInstruction::InitProposalInvestment { 
-        //     amounts,
-        //     slippage,
-        //     deadline,
-        //     fund_name,
-        // } => {
-        //     msg!("Instruction: Init Proposal");
-        //     process_init_investment_proposal(program_id, accounts, amounts, slippage, deadline, fund_name)
-        // }
+        FundInstruction::InitProposalInvestment { cid, deadline, fund_name } => {
+            msg!("Instruction: Init Proposal");
+            process_init_investment_proposal(program_id, accounts, fund_name, cid, deadline)
+        }
 
-        // FundInstruction::Vote {vote, proposal_index, vec_index, fund_name} => {
-        //     msg!("Instruction: Voting on Proposal");
-        //     process_vote_on_proposal(program_id, accounts, vote, proposal_index, vec_index, fund_name)
-        // }
+        FundInstruction::Vote {vote, proposal_index, vec_index, fund_name} => {
+            msg!("Instruction: Voting on Proposal");
+            process_vote_on_proposal(program_id, accounts, vote, proposal_index, vec_index, fund_name)
+        }
 
         // FundInstruction::InitRentAccount {  } => {
         //     msg!("Instruction: Init Rent Account");
@@ -82,15 +77,15 @@ pub fn process_instruction<'a>(
         //     process_init_join_proposal(program_id, accounts, fund_name)
         // }
 
-        FundInstruction::JoinVote { vote, fund_name, proposal_index } => {
-            msg!("Instruction: Voting on Join Proposal");
-            process_vote_on_join_proposal(program_id, accounts, vote, fund_name, proposal_index)
-        }
+        // FundInstruction::JoinVote { vote, fund_name, proposal_index } => {
+        //     msg!("Instruction: Voting on Join Proposal");
+        //     process_vote_on_join_proposal(program_id, accounts, vote, fund_name, proposal_index)
+        // }
 
-        FundInstruction::CancelJoinProposal { fund_name, proposal_index } => {
-            msg!("Instruction: Cancel Join Proposal");
-            process_cancel_join_proposal(program_id, accounts, fund_name, proposal_index)
-        }
+        // FundInstruction::CancelJoinProposal { fund_name, proposal_index } => {
+        //     msg!("Instruction: Cancel Join Proposal");
+        //     process_cancel_join_proposal(program_id, accounts, fund_name, proposal_index)
+        // }
 
         // FundInstruction::CancelInvestmentProposal { fund_name, proposal_index, vec_index } => {
         //     msg!("Instruction: Cancel Investment Proposal");
@@ -122,9 +117,9 @@ pub fn process_instruction<'a>(
             process_init_light_fund(program_id, accounts, fund_name, num_of_members, tags, add_members_later, max_num_members, fund_type, is_eligible)
         }
 
-        FundInstruction::HandleInvition { fund_name, response } => {
+        FundInstruction::HandleInvition { fund_name, response, inviter_exists } => {
             msg!("Instruction: Handle Invitations");
-            process_handle_invitation(program_id, accounts, fund_name, response)
+            process_handle_invitation(program_id, accounts, fund_name, response, inviter_exists)
         }
 
         FundInstruction::InviteToFund { fund_name, fund_type, is_eligible } => {
@@ -190,14 +185,13 @@ fn process_init_light_fund(
         return Err(FundError::InvalidProposalAccount.into());
     }
     if !fund_account_info.data_is_empty() {
-        msg!("2");
         return Err(FundError::InvalidFundDetails.into());
     }
 
     let rent = Rent::get()?;
-    let fund_space = 123 as usize;
+    let fund_space = 127 as usize;
     let vault_space = 8 as usize;
-    let aggregator_space = 37 as usize;
+    let aggregator_space = 5 as usize;
     
     invoke_signed(
         &system_instruction::create_account(
@@ -241,7 +235,7 @@ fn process_init_light_fund(
     let len = bytes.len().min(32);
     array[..len].copy_from_slice(&bytes[..len]);
 
-    let members: Vec<Pubkey> = vec![*creator_wallet_info.key];
+    let members: Vec<(Pubkey, u32)> = vec![(*creator_wallet_info.key, 0 as u32)];
     if num_of_members == 0 && max_num_members < 1 {
         return Err(FundError::InvalidMemberInfo.into());
     }
@@ -285,6 +279,7 @@ fn process_init_light_fund(
         governance_token_balance: 0 as u64,
         is_pending: false,
         is_eligible: 0 as u8,
+        inviter_index: 0 as u32,
         join_time: current_time
     });
 
@@ -349,6 +344,7 @@ fn process_init_light_fund(
             governance_token_balance: 0 as u64,
             is_pending: true,
             is_eligible,
+            inviter_index: 0 as u32,
             join_time: current_time
         });
         
@@ -407,11 +403,19 @@ fn process_invite_to_fund(
     let inviter_exists = fund_data
         .members
         .iter()
-        .any(|member| member == inviter_wallet_info.key);
+        .any(|member| member.0 == *inviter_wallet_info.key);
 
     if !inviter_exists {
         return Err(FundError::NotAFundMember.into());
     }
+
+    let inviter_info = fund_data
+        .members
+        .iter()
+        .find(|member| member.0 == *inviter_wallet_info.key)
+        .ok_or(FundError::InvalidAccountData)?;
+
+    let inviter_index = inviter_info.1;
 
     let mut joiner_data = UserAccount::try_from_slice(&joiner_account_info.data.borrow())?;
     let already_invited = joiner_data
@@ -429,6 +433,7 @@ fn process_invite_to_fund(
         governance_token_balance: 0 as u64,
         is_pending: true,
         is_eligible,
+        inviter_index,
         join_time: current_time
     });
 
@@ -460,6 +465,7 @@ fn process_handle_invitation(
     accounts: &[AccountInfo],
     fund_name: String,
     response: u8,
+    inviter_exists: u8,
 ) -> ProgramResult {
     let current_time = Clock::get()?.unix_timestamp;
 
@@ -467,8 +473,8 @@ fn process_handle_invitation(
     let joiner_wallet_info = next_account_info(accounts_iter)?;
     let joiner_account_info = next_account_info(accounts_iter)?;
     let fund_account_info = next_account_info(accounts_iter)?;
-    let inviter_wallet_info = next_account_info(accounts_iter)?;
     let system_program_info = next_account_info(accounts_iter)?;
+    let rent_reserve_info = next_account_info(accounts_iter)?;
 
     if !joiner_wallet_info.is_signer {
         return Err(FundError::MissingRequiredSignature.into());
@@ -476,15 +482,16 @@ fn process_handle_invitation(
 
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
     let (joiner_pda, _joiner_bump) = Pubkey::find_program_address(&[b"user", joiner_wallet_info.key.as_ref()], program_id);
+    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
-    if *fund_account_info.key != fund_pda || *joiner_account_info.key != joiner_pda {
+    if *fund_account_info.key != fund_pda || *joiner_account_info.key != joiner_pda || *rent_reserve_info.key != rent_pda {
         return Err(FundError::InvalidAccountData.into());
     }
 
     let mut fund_data = LightFundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     let mut joiner_data = UserAccount::try_from_slice(&joiner_account_info.data.borrow())?;
 
-    if fund_data.members.iter().any(|member| member == joiner_wallet_info.key) {
+    if fund_data.members.iter().any(|member| member.0 == *joiner_wallet_info.key) {
         return Err(FundError::AlreadyMember.into());
     }
 
@@ -493,7 +500,7 @@ fn process_handle_invitation(
         return Err(FundError::NotInvited.into());
     }
 
-    let user_specific =  joiner_data
+    let user_specific = joiner_data
         .funds
         .iter()
         .find(|user_specific| user_specific.fund == *fund_account_info.key)
@@ -503,111 +510,103 @@ fn process_handle_invitation(
         return Err(FundError::AlreadyMember.into());
     }
 
-    // Inviter Verification
-    let hash_result = hash(inviter_wallet_info.key.to_string().as_bytes());
-    let hash_bytes = hash_result.to_bytes();
-    let mut hash_hex = String::new();
-    for byte in &hash_bytes {
-        use core::fmt::Write;
-        write!(hash_hex, "{:02x}", byte).unwrap();
-    }
-    let mut numbers: String = String::from("");
-    let mut count = 0;
-
-    for c in hash_hex.chars() {
-        if c >= '0' && c <= '1' {
-            numbers.push('0');
-            count += 1;
-        } else if c > '1' && c <= '4' {
-            numbers.push('1');
-            count += 1;
-        } else if c > '4' && c <= '7' {
-            numbers.push('2');
-            count += 1;
-        } else if c > '7' && c <= '9' {
-            numbers.push('3');
-            count += 1;
-        }
-        if count == 7 {
-            break;
-        }
-    }
-
-    while numbers.len() < 7 {
-        numbers.push('0');
-    }
-
-    msg!("{}", numbers);
-
-    let a = &numbers[0..3];
-    let b = &numbers[3..7];
-
-    let mut first_byte: u8 = 0;
-    for (i, ch) in a.chars().enumerate() {
-        let digit = ch.to_digit(10).unwrap_or(0) as u8;
-        msg!("First Byte: {}", digit);
-        let power = 4u32.pow(3 - i as u32) as u8;
-        first_byte = first_byte.wrapping_add(digit * power);
-    }
-
-    let mut second_byte: u8 = 0;
-    for (i, ch) in b.chars().enumerate() {
-        let digit = ch.to_digit(10).unwrap_or(0) as u8;
-        msg!("Second Byte: {}", digit);
-        let power = 4u32.pow(3 - i as u32) as u8;
-        second_byte = second_byte.wrapping_add(digit * power);
-    }
-
-    if first_byte != user_specific.fund_type {
-        return Err(FundError::InvalidInviter.into());
-    }
-
-    if second_byte != user_specific.is_eligible {
-        return Err(FundError::InvalidInviter.into());
-    }
-
     let rent = Rent::get()?;
 
-    if response == 0 {
-        joiner_data.funds.retain(|fund| fund.fund != *fund_account_info.key);
-        let current_joiner_space = joiner_account_info.data_len();
-        let new_joiner_space = current_joiner_space - 51;
-        let current_joiner_rent = joiner_account_info.lamports();
-        let new_joiner_rent = rent.minimum_balance(new_joiner_space);
+    if inviter_exists == 1 {
+        // Inviter Verification
+        let inviter_wallet_info = next_account_info(accounts_iter)?;
+        let inviter_correct = fund_data
+            .members
+            .iter()
+            .any(|member| member.0 == *inviter_wallet_info.key && member.1 == user_specific.inviter_index);
 
-        if new_joiner_rent < current_joiner_rent {
-            **joiner_account_info.lamports.borrow_mut() -= current_joiner_rent - new_joiner_rent;
-            **inviter_wallet_info.lamports.borrow_mut() += current_joiner_rent - new_joiner_rent;
+        if !inviter_correct {
+            return Err(FundError::InvalidInviter.into());
         }
 
-        joiner_account_info.realloc(new_joiner_space, false)?;
-        joiner_data.serialize(&mut &mut joiner_account_info.data.borrow_mut()[..])?;
-    } else {
-        if let Some(user_specific) = joiner_data
-            .funds
-            .iter_mut()
-            .find(|entry| entry.fund == *fund_account_info.key) {
-                user_specific.is_pending = false;
-                user_specific.join_time = current_time;
-            } else {
-                msg!("User is not a member in this fund");
-                return Err(FundError::InvalidAccountData.into());
+        if response == 0 {
+            joiner_data.funds.retain(|fund| fund.fund != *fund_account_info.key);
+            let current_joiner_space = joiner_account_info.data_len();
+            let new_joiner_space = current_joiner_space - 51;
+            let current_joiner_rent = joiner_account_info.lamports();
+            let new_joiner_rent = rent.minimum_balance(new_joiner_space);
+
+            if new_joiner_rent < current_joiner_rent {
+                **joiner_account_info.lamports.borrow_mut() -= current_joiner_rent - new_joiner_rent;
+                **inviter_wallet_info.lamports.borrow_mut() += current_joiner_rent - new_joiner_rent;
             }
 
-        joiner_data.serialize(&mut &mut joiner_account_info.data.borrow_mut()[..])?;
+            joiner_account_info.realloc(new_joiner_space, false)?;
+            joiner_data.serialize(&mut &mut joiner_account_info.data.borrow_mut()[..])?;
+        } else {
+            if let Some(user_specific) = joiner_data
+                .funds
+                .iter_mut()
+                .find(|entry| entry.fund == *fund_account_info.key) {
+                    user_specific.is_pending = false;
+                    user_specific.join_time = current_time;
+                } else {
+                    msg!("User is not a member in this fund");
+                    return Err(FundError::InvalidAccountData.into());
+                }
 
-        let x = rent.minimum_balance(0 as usize);
-        let y = rent.minimum_balance(51 as usize);
-        invoke(
-            &system_instruction::transfer(
-                joiner_wallet_info.key,
-                inviter_wallet_info.key,
-                y - x
-            ),
-            &[joiner_wallet_info.clone(), inviter_wallet_info.clone(), system_program_info.clone()]
-        )?;
+            joiner_data.serialize(&mut &mut joiner_account_info.data.borrow_mut()[..])?;
 
-        fund_data.members.push(*joiner_wallet_info.key);
+            let x = rent.minimum_balance(0 as usize);
+            let y = rent.minimum_balance(51 as usize);
+            invoke(
+                &system_instruction::transfer(
+                    joiner_wallet_info.key,
+                    inviter_wallet_info.key,
+                    y - x
+                ),
+                &[joiner_wallet_info.clone(), inviter_wallet_info.clone(), system_program_info.clone()]
+            )?;
+        }
+    } else {
+        if response == 0 {
+            joiner_data.funds.retain(|fund| fund.fund != *fund_account_info.key);
+            let current_joiner_space = joiner_account_info.data_len();
+            let new_joiner_space = current_joiner_space - 51;
+            let current_joiner_rent = joiner_account_info.lamports();
+            let new_joiner_rent = rent.minimum_balance(new_joiner_space);
+
+            if new_joiner_rent < current_joiner_rent {
+                **joiner_account_info.lamports.borrow_mut() -= current_joiner_rent - new_joiner_rent;
+                **rent_reserve_info.lamports.borrow_mut() += current_joiner_rent - new_joiner_rent;
+            }
+
+            joiner_account_info.realloc(new_joiner_space, false)?;
+            joiner_data.serialize(&mut &mut joiner_account_info.data.borrow_mut()[..])?;
+        } else {
+            if let Some(user_specific) = joiner_data
+                .funds
+                .iter_mut()
+                .find(|entry| entry.fund == *fund_account_info.key) {
+                    user_specific.is_pending = false;
+                    user_specific.join_time = current_time;
+                } else {
+                    msg!("User is not a member in this fund");
+                    return Err(FundError::InvalidAccountData.into());
+                }
+
+            joiner_data.serialize(&mut &mut joiner_account_info.data.borrow_mut()[..])?;
+
+            let x = rent.minimum_balance(0 as usize);
+            let y = rent.minimum_balance(51 as usize);
+            invoke(
+                &system_instruction::transfer(
+                    joiner_wallet_info.key,
+                    rent_reserve_info.key,
+                    y - x
+                ),
+                &[joiner_wallet_info.clone(), rent_reserve_info.clone(), system_program_info.clone()]
+            )?;
+        }
+    }
+
+    if response == 1 {
+        fund_data.members.push((*joiner_wallet_info.key, fund_data.members[fund_data.members.len() - 1].1 + 1));
         let current_fund_size = fund_account_info.data_len();
         let new_fund_size = current_fund_size + 32;
         let current_fund_rent = fund_account_info.lamports();
@@ -650,10 +649,6 @@ fn process_withdraw_or_leave_from_light_fund(
     let system_program_info = next_account_info(accounts_iter)?;
     let ata_program_info = next_account_info(accounts_iter)?;
     let rent_sysvar_info = next_account_info(accounts_iter)?;
-
-    // if num_of_tokens > 7 {
-    //     return Err(FundError::InvalidNumberOfWithdrawals.into());
-    // }
 
     msg!("Stake Percent: {}", stake_percent);
 
@@ -712,10 +707,52 @@ fn process_withdraw_or_leave_from_light_fund(
     if member_deposit > total_deposit {
         return Err(FundError::InvalidAccountData.into());
     }
+
+    let rent = Rent::get()?;
+    
+    fund_data.total_deposit -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000_000 as u128)) as u64;
+    msg!("Fund's Total Deposit: {}", fund_data.total_deposit);
+
+    if task == 1 {
+        fund_data.members.retain(|member| member.0 != *member_wallet_info.key);
+        member_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
+
+        let current_fund_size = fund_account_info.data_len();
+        let new_fund_size = current_fund_size - 32;
+        let current_fund_rent = fund_account_info.lamports();
+        let new_fund_rent = rent.minimum_balance(new_fund_size);
+        
+
+        let current_user_size = member_account_info.data_len();
+        let new_user_size = current_user_size - 51;
+        let current_user_rent = member_account_info.lamports();
+        let new_user_rent = rent.minimum_balance(new_user_size);
+
+        fund_account_info.realloc(new_fund_size, false)?;
+        member_account_info.realloc(new_user_size, false)?;
+
+        if current_fund_rent > new_fund_rent  {
+            **fund_account_info.lamports.borrow_mut() -= current_fund_rent - new_fund_rent;
+            **member_wallet_info.lamports.borrow_mut() += current_fund_rent - new_fund_rent;
+        }
+
+        if current_user_rent > new_user_rent  {
+            **member_account_info.lamports.borrow_mut() -= current_user_rent - new_user_rent;
+            **member_wallet_info.lamports.borrow_mut() += current_user_rent - new_user_rent;
+        }
+    } else {
+        member_data.funds[matched_index].governance_token_balance -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000_000 as u128)) as u64;
+        msg!("Member Deposit After Withdrawal: {}", member_data.funds[matched_index].governance_token_balance);
+    }
+    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+    member_data.serialize(&mut &mut member_account_info.data.borrow_mut()[..])?;
+
+    if total_deposit == 0 {
+        return Ok(());
+    }
     
     let withdraw_percent = ((((stake_percent as u128) * (member_deposit as u128)) as u128)/(total_deposit as u128)) as u64;
     msg!("Withdraw percent overall: {}", withdraw_percent);
-    let rent = Rent::get()?;
 
     let wsol_mint = pubkey!("So11111111111111111111111111111111111111112");
 
@@ -826,43 +863,6 @@ fn process_withdraw_or_leave_from_light_fund(
             )?;
         }
     }
-
-    fund_data.total_deposit -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000_000 as u128)) as u64;
-    msg!("Fund's Total Deposit: {}", fund_data.total_deposit);
-
-    if task == 1 {
-        fund_data.members.retain(|member| member != member_wallet_info.key);
-        member_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
-
-        let current_fund_size = fund_account_info.data_len();
-        let new_fund_size = current_fund_size - 32;
-        let current_fund_rent = fund_account_info.lamports();
-        let new_fund_rent = rent.minimum_balance(new_fund_size);
-        
-
-        let current_user_size = member_account_info.data_len();
-        let new_user_size = current_user_size - 51;
-        let current_user_rent = member_account_info.lamports();
-        let new_user_rent = rent.minimum_balance(new_user_size);
-
-        fund_account_info.realloc(new_fund_size, false)?;
-        member_account_info.realloc(new_user_size, false)?;
-
-        if current_fund_rent > new_fund_rent  {
-            **fund_account_info.lamports.borrow_mut() -= current_fund_rent-new_fund_rent;
-            **member_wallet_info.lamports.borrow_mut() += current_fund_rent-new_fund_rent;
-        }
-
-        if current_user_rent > new_user_rent  {
-            **member_account_info.lamports.borrow_mut() -= current_user_rent-new_user_rent;
-            **member_wallet_info.lamports.borrow_mut() += current_user_rent-new_user_rent;
-        }
-    } else {
-        member_data.funds[matched_index].governance_token_balance -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000_000 as u128)) as u64;
-        msg!("Member Deposit After Withdrawal: {}", member_data.funds[matched_index].governance_token_balance);
-    }
-    fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
-    member_data.serialize(&mut &mut member_account_info.data.borrow_mut()[..])?;
 
     msg!("Transferred holdings successfully");
 
@@ -1383,289 +1383,289 @@ fn process_init_user_account(
 //     Ok(())
 // }
 
-fn process_vote_on_join_proposal(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    vote: u8,
-    fund_name: String,
-    proposal_index: u8
-) -> ProgramResult {
-    let current_time = Clock::get()?.unix_timestamp;
+// fn process_vote_on_join_proposal(
+//     program_id: &Pubkey,
+//     accounts: &[AccountInfo],
+//     vote: u8,
+//     fund_name: String,
+//     proposal_index: u8
+// ) -> ProgramResult {
+//     let current_time = Clock::get()?.unix_timestamp;
 
-    let accounts_iter = &mut accounts.iter();
-    let voter_account_info = next_account_info(accounts_iter)?; // Voter Wallet ..................................
-    let vote_account_info = next_account_info(accounts_iter)?; // Join Votes aggregator ..........................
-    let join_proposal_aggregator_info = next_account_info(accounts_iter)?; // Join proposal aggregator ...........
-    let system_program_info = next_account_info(accounts_iter)?; // System Program ...............................
-    let fund_account_info = next_account_info(accounts_iter)?; // fund Account ...................................
-    let governance_token_mint_info = next_account_info(accounts_iter)?; // Governance Mint account ...............
-    let voter_token_account_info = next_account_info(accounts_iter)?; // Voter's governance token account ........
-    let token_program_2022_info = next_account_info(accounts_iter)?; // token extension program ..................
-    let joiner_account_info = next_account_info(accounts_iter)?; // joiner wallet ................................
-    let joiner_pda_info = next_account_info(accounts_iter)?; // joiner global account ............................
+//     let accounts_iter = &mut accounts.iter();
+//     let voter_account_info = next_account_info(accounts_iter)?; // Voter Wallet ..................................
+//     let vote_account_info = next_account_info(accounts_iter)?; // Join Votes aggregator ..........................
+//     let join_proposal_aggregator_info = next_account_info(accounts_iter)?; // Join proposal aggregator ...........
+//     let system_program_info = next_account_info(accounts_iter)?; // System Program ...............................
+//     let fund_account_info = next_account_info(accounts_iter)?; // fund Account ...................................
+//     let governance_token_mint_info = next_account_info(accounts_iter)?; // Governance Mint account ...............
+//     let voter_token_account_info = next_account_info(accounts_iter)?; // Voter's governance token account ........
+//     let token_program_2022_info = next_account_info(accounts_iter)?; // token extension program ..................
+//     let joiner_account_info = next_account_info(accounts_iter)?; // joiner wallet ................................
+//     let joiner_pda_info = next_account_info(accounts_iter)?; // joiner global account ............................
 
-    if !voter_account_info.is_signer {
-        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return Err(FundError::MissingRequiredSignature.into());
-    }
+//     if !voter_account_info.is_signer {
+//         msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return Err(FundError::MissingRequiredSignature.into());
+//     }
 
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-    let index = 0 as u8;
-    let (join_proposal_pda, _join_proposal_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_pda.as_ref()], program_id);
-    let (join_vote_pda, _join_vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_pda.as_ref()], program_id);
-    let (governance_mint, _governance_bump) = Pubkey::find_program_address(&[b"governance", fund_pda.as_ref()], program_id);
-    let (joiner_pda, _joiner_bump) = Pubkey::find_program_address(&[b"user", joiner_account_info.key.as_ref()], program_id);
+//     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+//     let index = 0 as u8;
+//     let (join_proposal_pda, _join_proposal_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_pda.as_ref()], program_id);
+//     let (join_vote_pda, _join_vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_pda.as_ref()], program_id);
+//     let (governance_mint, _governance_bump) = Pubkey::find_program_address(&[b"governance", fund_pda.as_ref()], program_id);
+//     let (joiner_pda, _joiner_bump) = Pubkey::find_program_address(&[b"user", joiner_account_info.key.as_ref()], program_id);
 
-    if *fund_account_info.key != fund_pda ||
-       *join_proposal_aggregator_info.key != join_proposal_pda ||
-       *vote_account_info.key != join_vote_pda ||
-       *governance_token_mint_info.key != governance_mint ||
-       *joiner_pda_info.key != joiner_pda {
-        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return Err(FundError::InvalidAccountData.into());
-    }
+//     if *fund_account_info.key != fund_pda ||
+//        *join_proposal_aggregator_info.key != join_proposal_pda ||
+//        *vote_account_info.key != join_vote_pda ||
+//        *governance_token_mint_info.key != governance_mint ||
+//        *joiner_pda_info.key != joiner_pda {
+//         msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return Err(FundError::InvalidAccountData.into());
+//     }
 
-    let token_account = spl_associated_token_account::get_associated_token_address_with_program_id(
-        voter_account_info.key,
-        governance_token_mint_info.key,
-        token_program_2022_info.key
-    );
+//     let token_account = spl_associated_token_account::get_associated_token_address_with_program_id(
+//         voter_account_info.key,
+//         governance_token_mint_info.key,
+//         token_program_2022_info.key
+//     );
 
-    if token_account != *voter_token_account_info.key {
-        msg!("[FUND-ERROR] {} {} Your token account doesn's match the derived one.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return Err(FundError::InvalidTokenAccount.into());
-    }
+//     if token_account != *voter_token_account_info.key {
+//         msg!("[FUND-ERROR] {} {} Your token account doesn's match the derived one.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return Err(FundError::InvalidTokenAccount.into());
+//     }
 
-    if voter_token_account_info.data_is_empty() {
-        msg!("[FUND-ERROR] {} {} Your token account does not exist.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return  Err(FundError::NoVotingPower.into());
-    }
+//     if voter_token_account_info.data_is_empty() {
+//         msg!("[FUND-ERROR] {} {} Your token account does not exist.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return  Err(FundError::NoVotingPower.into());
+//     }
 
-    if vote_account_info.data_is_empty() {
-        msg!("[FUND-ERROR] {} {} The vote account for this proposal doesn't exist. Maybe the proposal is cancelled.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return Err(FundError::InvalidVoteAccount.into());
-    }
+//     if vote_account_info.data_is_empty() {
+//         msg!("[FUND-ERROR] {} {} The vote account for this proposal doesn't exist. Maybe the proposal is cancelled.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return Err(FundError::InvalidVoteAccount.into());
+//     }
 
-    let mut join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
-    let (matched_index, proposal) = join_proposal_data
-        .join_proposals
-        .iter()
-        .enumerate()
-        .find(|(_, p)| p.proposal_index == proposal_index)
-        .ok_or(FundError::InvalidAccountData)?;
+//     let mut join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
+//     let (matched_index, proposal) = join_proposal_data
+//         .join_proposals
+//         .iter()
+//         .enumerate()
+//         .find(|(_, p)| p.proposal_index == proposal_index)
+//         .ok_or(FundError::InvalidAccountData)?;
 
-    if proposal.joiner != *joiner_account_info.key {
-        msg!("[FUND-ERROR] {} {} The proposal's joiner wallet differs from what is provided.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return Err(FundError::InvalidAccountData.into());
-    }
+//     if proposal.joiner != *joiner_account_info.key {
+//         msg!("[FUND-ERROR] {} {} The proposal's joiner wallet differs from what is provided.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return Err(FundError::InvalidAccountData.into());
+//     }
 
-    let mut joiner_data = UserAccount::try_from_slice(&joiner_pda_info.data.borrow())?;
-    let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    let is_voter_member = fund_data
-        .members
-        .iter()
-        .any(|member| *member == *voter_account_info.key);
+//     let mut joiner_data = UserAccount::try_from_slice(&joiner_pda_info.data.borrow())?;
+//     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+//     let is_voter_member = fund_data
+//         .members
+//         .iter()
+//         .any(|member| *member == *voter_account_info.key);
 
-    if !is_voter_member {
-        msg!("[FUND-ERROR] {} {} You are not a member of the fund and so cannot vote.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return Err(FundError::NotAFundMember.into());
-    }
+//     if !is_voter_member {
+//         msg!("[FUND-ERROR] {} {} You are not a member of the fund and so cannot vote.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return Err(FundError::NotAFundMember.into());
+//     }
 
-    let mut vote_data = JoinVoteAccount::try_from_slice(&mut &mut vote_account_info.data.borrow())?;
+//     let mut vote_data = JoinVoteAccount::try_from_slice(&mut &mut vote_account_info.data.borrow())?;
 
-    // check if already voted
-    let voter_exists = vote_data
-        .voters
-        .iter()
-        .any(|(key, _)| *key == *voter_account_info.key);
+//     // check if already voted
+//     let voter_exists = vote_data
+//         .voters
+//         .iter()
+//         .any(|(key, _)| *key == *voter_account_info.key);
 
-    if voter_exists {
-        msg!("[FUND-ERROR] {} {} You have voted for this proposal already.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return Err(FundError::AlreadyVoted.into());
-    }
+//     if voter_exists {
+//         msg!("[FUND-ERROR] {} {} You have voted for this proposal already.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return Err(FundError::AlreadyVoted.into());
+//     }
 
-    let rent = Rent::get()?;
-    let current_space = vote_account_info.data_len();
-    let new_space = current_space + 33 as usize;
-    let current_rent = vote_account_info.lamports();
-    let new_rent = rent.minimum_balance(new_space);
+//     let rent = Rent::get()?;
+//     let current_space = vote_account_info.data_len();
+//     let new_space = current_space + 33 as usize;
+//     let current_rent = vote_account_info.lamports();
+//     let new_rent = rent.minimum_balance(new_space);
 
-    // transfer reallocation lamports
-    if new_rent > current_rent {
-        invoke(
-            &system_instruction::transfer(
-                voter_account_info.key,
-                vote_account_info.key,
-                new_rent - current_rent
-            ),
-            &[voter_account_info.clone(), vote_account_info.clone(), system_program_info.clone()]
-        )?;
-    }
+//     // transfer reallocation lamports
+//     if new_rent > current_rent {
+//         invoke(
+//             &system_instruction::transfer(
+//                 voter_account_info.key,
+//                 vote_account_info.key,
+//                 new_rent - current_rent
+//             ),
+//             &[voter_account_info.clone(), vote_account_info.clone(), system_program_info.clone()]
+//         )?;
+//     }
 
-    vote_account_info.realloc(new_space, false)?;
-    vote_data.voters.push((*voter_account_info.key, vote));
-    vote_data.serialize(&mut &mut vote_account_info.data.borrow_mut()[..])?;
+//     vote_account_info.realloc(new_space, false)?;
+//     vote_data.voters.push((*voter_account_info.key, vote));
+//     vote_data.serialize(&mut &mut vote_account_info.data.borrow_mut()[..])?;
 
     
-    if *voter_token_account_info.owner != *token_program_2022_info.key {
-        msg!("[FUND-ERROR] {} {} The owner of your token account is not Token Program 2022.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-        return Err(FundError::InvalidAccountData.into());
-    }
+//     if *voter_token_account_info.owner != *token_program_2022_info.key {
+//         msg!("[FUND-ERROR] {} {} The owner of your token account is not Token Program 2022.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//         return Err(FundError::InvalidAccountData.into());
+//     }
 
-    let token_account_data = voter_token_account_info.try_borrow_data()?;
-    let token_account = spl_token_2022::extension::StateWithExtensions::<spl_token_2022::state::Account>::unpack(&token_account_data)?;
-    let base_account = token_account.base;
-    let balance = base_account.amount;
-    if vote == 0 {
-        join_proposal_data.join_proposals[matched_index as usize].votes_no += balance;
-    } else {
-        join_proposal_data.join_proposals[matched_index as usize].votes_yes += balance;
-    }
+//     let token_account_data = voter_token_account_info.try_borrow_data()?;
+//     let token_account = spl_token_2022::extension::StateWithExtensions::<spl_token_2022::state::Account>::unpack(&token_account_data)?;
+//     let base_account = token_account.base;
+//     let balance = base_account.amount;
+//     if vote == 0 {
+//         join_proposal_data.join_proposals[matched_index as usize].votes_no += balance;
+//     } else {
+//         join_proposal_data.join_proposals[matched_index as usize].votes_yes += balance;
+//     }
 
-    join_proposal_data.serialize(&mut &mut join_proposal_aggregator_info.data.borrow_mut()[..])?;
+//     join_proposal_data.serialize(&mut &mut join_proposal_aggregator_info.data.borrow_mut()[..])?;
 
-    if 2 * join_proposal_data.join_proposals[matched_index as usize].votes_yes >= fund_data.total_deposit {
-        if let Some(user_specific) = joiner_data
-            .funds
-            .iter_mut()
-            .find(|entry| entry.fund == *fund_account_info.key) {
-                user_specific.is_pending = true;
-                // user_specific.is_eligible = true;
-            } else {
-                msg!("[FUND-ERROR] {} {} User is not a member in this fund.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
-                return Err(FundError::InvalidAccountData.into());
-            }
-    }
+//     if 2 * join_proposal_data.join_proposals[matched_index as usize].votes_yes >= fund_data.total_deposit {
+//         if let Some(user_specific) = joiner_data
+//             .funds
+//             .iter_mut()
+//             .find(|entry| entry.fund == *fund_account_info.key) {
+//                 user_specific.is_pending = true;
+//                 // user_specific.is_eligible = true;
+//             } else {
+//                 msg!("[FUND-ERROR] {} {} User is not a member in this fund.", fund_account_info.key.to_string(), voter_account_info.key.to_string());
+//                 return Err(FundError::InvalidAccountData.into());
+//             }
+//     }
 
-    joiner_data.serialize(&mut &mut joiner_pda_info.data.borrow_mut()[..])?;
+//     joiner_data.serialize(&mut &mut joiner_pda_info.data.borrow_mut()[..])?;
 
-    msg!("[FUND-ACTIVITY] {} {} {} {} voted for addition of {}", fund_account_info.key.to_string(), current_time, fund_name, voter_account_info.key.to_string(), joiner_account_info.key.to_string());
+//     msg!("[FUND-ACTIVITY] {} {} {} {} voted for addition of {}", fund_account_info.key.to_string(), current_time, fund_name, voter_account_info.key.to_string(), joiner_account_info.key.to_string());
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 
-fn process_cancel_join_proposal(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    fund_name: String,
-    proposal_index: u8,
-) -> ProgramResult {
-    let accounts_iter = &mut accounts.iter();
-    let joiner_account_info = next_account_info(accounts_iter)?; //  joiner wallet ...........................
-    let joiner_pda_info = next_account_info(accounts_iter)?; // joiner global pda ............................
-    let fund_account_info = next_account_info(accounts_iter)?; // fund account ...............................
-    let join_proposal_aggregator_info = next_account_info(accounts_iter)?; // join proposal aggregator .......
-    let vote_account_info = next_account_info(accounts_iter)?; // vote account ...............................
-    let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ...............................
+// fn process_cancel_join_proposal(
+//     program_id: &Pubkey,
+//     accounts: &[AccountInfo],
+//     fund_name: String,
+//     proposal_index: u8,
+// ) -> ProgramResult {
+//     let accounts_iter = &mut accounts.iter();
+//     let joiner_account_info = next_account_info(accounts_iter)?; //  joiner wallet ...........................
+//     let joiner_pda_info = next_account_info(accounts_iter)?; // joiner global pda ............................
+//     let fund_account_info = next_account_info(accounts_iter)?; // fund account ...............................
+//     let join_proposal_aggregator_info = next_account_info(accounts_iter)?; // join proposal aggregator .......
+//     let vote_account_info = next_account_info(accounts_iter)?; // vote account ...............................
+//     let rent_reserve_info = next_account_info(accounts_iter)?; // rent reserve ...............................
 
-    if !joiner_account_info.is_signer {
-        msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
-        return Err(FundError::MissingRequiredSignature.into());
-    }
+//     if !joiner_account_info.is_signer {
+//         msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
+//         return Err(FundError::MissingRequiredSignature.into());
+//     }
 
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-    let (joiner_pda, _joiner_bump) = Pubkey::find_program_address(&[b"user", joiner_account_info.key.as_ref()], program_id);
-    let index = 0 as u8;
-    let (join_aggregator_pda, _join_aggregator_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_account_info.key.as_ref()], program_id);
-    let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_account_info.key.as_ref()], program_id);
-    let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
+//     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+//     let (joiner_pda, _joiner_bump) = Pubkey::find_program_address(&[b"user", joiner_account_info.key.as_ref()], program_id);
+//     let index = 0 as u8;
+//     let (join_aggregator_pda, _join_aggregator_bump) = Pubkey::find_program_address(&[b"join-proposal-aggregator", &[index], fund_account_info.key.as_ref()], program_id);
+//     let (vote_pda, _vote_bump) = Pubkey::find_program_address(&[b"join-vote", &[proposal_index], fund_account_info.key.as_ref()], program_id);
+//     let (rent_pda, _rent_bump) = Pubkey::find_program_address(&[b"rent"], program_id);
 
-    if *fund_account_info.key != fund_pda ||
-       *joiner_pda_info.key != joiner_pda ||
-       *join_proposal_aggregator_info.key != join_aggregator_pda ||
-       *vote_account_info.key != vote_pda ||
-       *rent_reserve_info.key != rent_pda {
-        msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
-        return Err(FundError::InvalidAccountData.into());
-       }
+//     if *fund_account_info.key != fund_pda ||
+//        *joiner_pda_info.key != joiner_pda ||
+//        *join_proposal_aggregator_info.key != join_aggregator_pda ||
+//        *vote_account_info.key != vote_pda ||
+//        *rent_reserve_info.key != rent_pda {
+//         msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
+//         return Err(FundError::InvalidAccountData.into());
+//        }
 
-    let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
-    if fund_data.is_private == 0 {
-        msg!("[FUND-ERROR] {} {} This fund is not private.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
-        return Err(FundError::InvalidFundDetails.into());
-    }
+//     let fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+//     if fund_data.is_private == 0 {
+//         msg!("[FUND-ERROR] {} {} This fund is not private.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
+//         return Err(FundError::InvalidFundDetails.into());
+//     }
 
-    let is_joiner_member = fund_data
-       .members
-       .iter()
-       .any(|member| *member == *joiner_account_info.key);
+//     let is_joiner_member = fund_data
+//        .members
+//        .iter()
+//        .any(|member| *member == *joiner_account_info.key);
 
-    if is_joiner_member {
-        msg!("[FUND-ERROR] {} {} You are already a member of this fund.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
-        return Err(FundError::AlreadyMember.into());
-    }
+//     if is_joiner_member {
+//         msg!("[FUND-ERROR] {} {} You are already a member of this fund.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
+//         return Err(FundError::AlreadyMember.into());
+//     }
 
-    let mut joiner_data = UserAccount::try_from_slice(&joiner_pda_info.data.borrow())?;
-    let user_specific = joiner_data
-        .funds
-        .iter()
-        .find(|user_specific| user_specific.fund == *fund_account_info.key)
-        .ok_or(FundError::InvalidAccountData)?;
+//     let mut joiner_data = UserAccount::try_from_slice(&joiner_pda_info.data.borrow())?;
+//     let user_specific = joiner_data
+//         .funds
+//         .iter()
+//         .find(|user_specific| user_specific.fund == *fund_account_info.key)
+//         .ok_or(FundError::InvalidAccountData)?;
 
-    if !user_specific.is_pending {
-        msg!("[FUND-ERROR] {} {} You are already a member of this fund.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
-        return Err(FundError::AlreadyMember.into());
-    }
+//     if !user_specific.is_pending {
+//         msg!("[FUND-ERROR] {} {} You are already a member of this fund.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
+//         return Err(FundError::AlreadyMember.into());
+//     }
 
-    let mut join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
-    let (_matched_index, proposal) = join_proposal_data
-        .join_proposals
-        .iter()
-        .enumerate()
-        .find(|(_, proposal)| proposal.proposal_index == proposal_index)
-        .ok_or(FundError::InvalidAccountData)?;
+//     let mut join_proposal_data = JoinProposalAggregator::try_from_slice(&join_proposal_aggregator_info.data.borrow())?;
+//     let (_matched_index, proposal) = join_proposal_data
+//         .join_proposals
+//         .iter()
+//         .enumerate()
+//         .find(|(_, proposal)| proposal.proposal_index == proposal_index)
+//         .ok_or(FundError::InvalidAccountData)?;
 
-    if proposal.joiner != *joiner_account_info.key {
-        msg!("[FUND-ERROR] {} {} Wrong joiner/proposer wallet address.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
-        return Err(FundError::InvalidProposerInfo.into());
-    }
+//     if proposal.joiner != *joiner_account_info.key {
+//         msg!("[FUND-ERROR] {} {} Wrong joiner/proposer wallet address.", fund_account_info.key.to_string(), joiner_account_info.key.to_string());
+//         return Err(FundError::InvalidProposerInfo.into());
+//     }
 
-    join_proposal_data.join_proposals.retain(|proposal| proposal.proposal_index != proposal_index);
+//     join_proposal_data.join_proposals.retain(|proposal| proposal.proposal_index != proposal_index);
 
-    let rent = Rent::get()?;
-    let current_aggregator_size = join_proposal_aggregator_info.data_len();
-    let new_aggregator_size = current_aggregator_size - 57;
-    let current_aggregator_rent = join_proposal_aggregator_info.lamports();
-    let new_aggregator_rent = rent.minimum_balance(new_aggregator_size);
+//     let rent = Rent::get()?;
+//     let current_aggregator_size = join_proposal_aggregator_info.data_len();
+//     let new_aggregator_size = current_aggregator_size - 57;
+//     let current_aggregator_rent = join_proposal_aggregator_info.lamports();
+//     let new_aggregator_rent = rent.minimum_balance(new_aggregator_size);
 
-    join_proposal_aggregator_info.realloc(new_aggregator_size, false)?;
+//     join_proposal_aggregator_info.realloc(new_aggregator_size, false)?;
 
-    if new_aggregator_rent < current_aggregator_rent {
-        **join_proposal_aggregator_info.lamports.borrow_mut() -= current_aggregator_rent - new_aggregator_rent;
-        **joiner_account_info.lamports.borrow_mut() += current_aggregator_rent - new_aggregator_rent;
-    }
+//     if new_aggregator_rent < current_aggregator_rent {
+//         **join_proposal_aggregator_info.lamports.borrow_mut() -= current_aggregator_rent - new_aggregator_rent;
+//         **joiner_account_info.lamports.borrow_mut() += current_aggregator_rent - new_aggregator_rent;
+//     }
 
-    join_proposal_data.serialize(&mut &mut join_proposal_aggregator_info.data.borrow_mut()[..])?;
+//     join_proposal_data.serialize(&mut &mut join_proposal_aggregator_info.data.borrow_mut()[..])?;
 
-    // Delete Vote account
-    let lamports = vote_account_info.lamports();
-    **rent_reserve_info.lamports.borrow_mut() += lamports;
-    **vote_account_info.lamports.borrow_mut() -= lamports;
+//     // Delete Vote account
+//     let lamports = vote_account_info.lamports();
+//     **rent_reserve_info.lamports.borrow_mut() += lamports;
+//     **vote_account_info.lamports.borrow_mut() -= lamports;
 
-    let mut data = vote_account_info.data.borrow_mut();
-    for byte in data.iter_mut() {
-        *byte = 0;
-    }
+//     let mut data = vote_account_info.data.borrow_mut();
+//     for byte in data.iter_mut() {
+//         *byte = 0;
+//     }
 
-    // remove fund data from joiner pda
-    joiner_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
-    let current_joiner_size = joiner_pda_info.data_len();
-    let new_joiner_size = current_joiner_size - 50;
-    let current_joiner_rent = joiner_pda_info.lamports();
-    let new_joiner_rent = rent.minimum_balance(new_joiner_size);
+//     // remove fund data from joiner pda
+//     joiner_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
+//     let current_joiner_size = joiner_pda_info.data_len();
+//     let new_joiner_size = current_joiner_size - 50;
+//     let current_joiner_rent = joiner_pda_info.lamports();
+//     let new_joiner_rent = rent.minimum_balance(new_joiner_size);
 
-    joiner_pda_info.realloc(new_joiner_size, false)?;
+//     joiner_pda_info.realloc(new_joiner_size, false)?;
 
-    if new_joiner_rent < current_joiner_rent {
-        **joiner_pda_info.lamports.borrow_mut() -= current_joiner_rent - new_joiner_rent;
-        **joiner_account_info.lamports.borrow_mut() += current_joiner_rent - new_joiner_rent;
-    }
+//     if new_joiner_rent < current_joiner_rent {
+//         **joiner_pda_info.lamports.borrow_mut() -= current_joiner_rent - new_joiner_rent;
+//         **joiner_account_info.lamports.borrow_mut() += current_joiner_rent - new_joiner_rent;
+//     }
 
-    joiner_data.serialize(&mut &mut joiner_pda_info.data.borrow_mut()[..])?;
+//     joiner_data.serialize(&mut &mut joiner_pda_info.data.borrow_mut()[..])?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 
 // fn process_add_member<'a>(
@@ -1955,7 +1955,7 @@ fn process_init_deposit_token(
     let is_depositer_member = fund_data
         .members
         .iter()
-        .any(|member| *member == *member_account_info.key);
+        .any(|member| member.0 == *member_account_info.key);
 
     if !is_depositer_member {
         msg!("[FUND-ERROR] {} {} You are not a member of this fund and so cannot deposit in it.", fund_account_info.key.to_string(), member_account_info.key.to_string());
@@ -2146,14 +2146,15 @@ fn process_init_deposit_token(
     Ok(())
 }
 
-fn process_init_light_proposal(
+
+
+
+fn process_init_investment_proposal(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    amounts: Vec<u64>,
-    slippages: Vec<u16>,
-    deadline: i64,
     fund_name: String,
     cid: String,
+    deadline: i64,
 ) -> ProgramResult {
     let creation_time = Clock::get()?.unix_timestamp;
 
@@ -2161,7 +2162,7 @@ fn process_init_light_proposal(
     let proposer_account_info = next_account_info(accounts_iter)?;
     let fund_account_info = next_account_info(accounts_iter)?;
     let proposal_aggregator_info = next_account_info(accounts_iter)?;
-    let sysyem_program_info = next_account_info(accounts_iter)?;
+    let system_program_info = next_account_info(accounts_iter)?;
     let new_proposal_aggregator_info = next_account_info(accounts_iter)?;
 
     if !proposer_account_info.is_signer {
@@ -2170,24 +2171,24 @@ fn process_init_light_proposal(
     }
 
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
-    let mut fund_data = FundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+    let mut fund_data = LightFundAccount::try_from_slice(&fund_account_info.data.borrow())?;
 
     let is_proposer_member = fund_data
         .members
         .iter()
-        .any(|member| *member == *proposer_account_info.key);
+        .any(|member| member.0 == *proposer_account_info.key);
 
     if !is_proposer_member {
         msg!("[FUND-ERROR] {} {} You are not a member of this fund and so cannot create a proposal.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::NotAFundMember.into());
     }
 
-    let current_index = fund_data.current_proposal_index;
-
     if *fund_account_info.key != fund_pda {
         msg!("[FUND-ERROR] {} {} Wrong fund account information.", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::InvalidAccountData.into());
     }
+
+    let current_index = fund_data.current_proposal_index;
 
     let (proposal_aggregator_pda, _proposal_aggregator_bump) = Pubkey::find_program_address(
         &[
@@ -2212,24 +2213,205 @@ fn process_init_light_proposal(
         return Err(FundError::InvalidProposalAccount.into());
     }
 
+    // Rent Calculation
+    let rent = Rent::get()?;
+    let current_proposal_space = proposal_aggregator_info.data_len();
+    let extra_proposal_space = 118 as usize;
+
+    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+
+    let mut voters_bitmap: (u32, u32) = (0, 0);
+    let proposer_info = fund_data
+        .members
+        .iter()
+        .find(|member| member.0 == *proposer_account_info.key)
+        .ok_or(FundError::InvalidAccountData)?;
+
+    let proposer_vec_index = proposer_info.1;
+
+    voters_bitmap.0 = voters_bitmap.0 | ((1 as u32) << (proposer_vec_index));
+    voters_bitmap.1 = voters_bitmap.1 | ((1 as u32) << (proposer_vec_index));
+
     let bytes = cid.as_bytes();
     let mut array = [0u8; 59];
     let len = bytes.len().min(59);
     array[..len].copy_from_slice(&bytes[..len]);
 
-    // Rent Calculation
-    let rent = Rent::get()?;
-    let current_proposal_space = proposal_aggregator_info.data_len();
-    let extra_proposal_space = 110 as usize;
+    // check if new proposal aggregator is required
+    if (current_proposal_space + extra_proposal_space) > 10240 as usize {
+        // Create Proposal Account
+        invoke_signed(
+            &system_instruction::create_account(
+                proposer_account_info.key,
+                new_proposal_aggregator_info.key,
+                rent.minimum_balance(37 + extra_proposal_space),
+                (37 + extra_proposal_space) as u64,
+                program_id
+            ),
+            &[
+                new_proposal_aggregator_info.clone(),
+                proposer_account_info.clone(),
+                system_program_info.clone(),
+            ],
+            &[&[
+                b"proposal-aggregator",
+                &[current_index + 1],
+                fund_account_info.key.as_ref(),
+                &[new_proposal_aggregator_bump]
+            ]]
+        )?;
 
-    if  {
+        let proposals_vec: Vec<Proposal> = vec![ Proposal {
+            proposer: *proposer_account_info.key,
+            cid: array,
+            voters_bitmap,
+            votes_yes: 1 as u64,
+            votes_no: 0 as u64,
+            creation_time,
+            deadline,
+            executed: false,
+            vec_index: 0 as u16
+        }];
+
+        let new_proposal_data = ProposalAggregatorAccount {
+            index: current_index + 1,
+            proposals: proposals_vec
+        };
+
+        new_proposal_data.serialize(&mut &mut new_proposal_aggregator_info.data.borrow_mut()[..])?;
+
+        fund_data.current_proposal_index += 1;
+        fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
+
+        msg!("[FUND-ACTIVITY] {} {} {} Proposal created: ({}, 0) by {}", fund_account_info.key.to_string(), creation_time, fund_name, (current_index + 1), proposer_account_info.key.to_string());
+    } else {
+        let new_aggregator_size = extra_proposal_space + current_proposal_space as usize;
+        let current_rent_exempt = proposal_aggregator_info.lamports();
+        let new_rent_exempt = rent.minimum_balance(new_aggregator_size);
+
+        if new_rent_exempt > current_rent_exempt {
+            invoke(
+                &system_instruction::transfer(
+                    proposer_account_info.key,
+                    proposal_aggregator_info.key,
+                    new_rent_exempt-current_rent_exempt
+                ),
+                &[proposal_aggregator_info.clone(), proposer_account_info.clone(), system_program_info.clone()]
+            )?;
+        }
+
+        let num_of_proposals = proposal_aggregator_data.proposals.len();
+        let mut vec_index = 0 as u16;
+        if num_of_proposals != 0 {
+            vec_index = proposal_aggregator_data.proposals[num_of_proposals - 1].vec_index + 1;
+        }
+        msg!("Vec Index: {}", vec_index);
+
+        proposal_aggregator_info.realloc(new_aggregator_size, false)?;
         
+        proposal_aggregator_data.proposals.push( Proposal {
+            proposer: *proposer_account_info.key,
+            cid: array,
+            voters_bitmap,
+            votes_yes: 1 as u64,
+            votes_no: 0 as u64,
+            creation_time,
+            deadline,
+            executed: false,
+            vec_index
+        });
+
+        proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
+
+        msg!("[FUND-ACTIVITY] {} {} {} Proposal created: ({}, {}) by {}", fund_account_info.key.to_string(), creation_time, fund_name, current_index, vec_index, proposer_account_info.key.to_string());
     }
-
-
 
     Ok(())
 }
+
+
+fn process_vote_on_proposal(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    vote: u8,
+    proposal_index: u8,
+    vec_index: u16,
+    fund_name: String,
+) -> ProgramResult {
+    let current_time = Clock::get()?.unix_timestamp;
+
+    let accounts_iter = &mut accounts.iter();
+    let voter_account_info = next_account_info(accounts_iter)?; // Voter's Wallet ................................
+    let proposal_aggregator_info = next_account_info(accounts_iter)?; // Proposal account ........................
+    let fund_account_info = next_account_info(accounts_iter)?; // fund Account ...................................
+    let proposer_account_info = next_account_info(accounts_iter)?; // Proposer Wallet ............................
+
+    msg!("Vec Index: {}", vec_index);
+
+    // Voter needs to be signer
+    if !voter_account_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    // Pdas derivation
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (proposal_aggregator_pda, _proposal_aggregator_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index], fund_account_info.key.as_ref()], program_id);
+
+    // Pdas verification
+    if *fund_account_info.key != fund_pda ||
+       *proposal_aggregator_info.key != proposal_aggregator_pda {
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let fund_data = LightFundAccount::try_from_slice(&fund_account_info.data.borrow())?;
+
+    let is_voter_member = fund_data
+        .members
+        .iter()
+        .any(|member| member.0 == *voter_account_info.key);
+
+    if !is_voter_member {
+        return Err(FundError::NotAFundMember.into());
+    }
+
+    let voter_info = fund_data
+        .members
+        .iter()
+        .find(|member| member.0 == *voter_account_info.key)
+        .ok_or(FundError::InvalidAccountData)?;
+
+    let voter_vec_index = voter_info.1;    
+
+    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+    let (matched_index, proposal) = proposal_aggregator_data
+        .proposals
+        .iter()
+        .enumerate()
+        .find(|(_, proposal)| proposal.vec_index == vec_index)
+        .ok_or(FundError::InvalidProposalAccount)?;
+
+    if proposal.proposer != *proposer_account_info.key {
+        return Err(FundError::InvalidProposerInfo.into());
+    }
+
+    if proposal.deadline < current_time {
+        return Err(FundError::VotingCeased.into());
+    }
+
+    if (proposal_aggregator_data.proposals[matched_index].voters_bitmap.0 & (1 << voter_vec_index)) == 1 {
+        return Err(FundError::AlreadyVoted.into());
+    }
+
+    proposal_aggregator_data.proposals[matched_index].voters_bitmap.0 |= 1 << voter_vec_index;
+    proposal_aggregator_data.proposals[matched_index].voters_bitmap.1 |= (vote as u32) << voter_vec_index;
+
+    msg!("[FUND-ACTIVITY] {} {} {} Vote: {} on proposal ({}, {})", fund_account_info.key.to_string(), current_time, fund_name, voter_account_info.key.to_string(), proposal_index, vec_index);
+
+    Ok(())
+}
+
+
+
 
 // fn process_init_investment_proposal(
 //     program_id: &Pubkey,

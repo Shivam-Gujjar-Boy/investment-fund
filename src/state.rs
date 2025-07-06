@@ -11,7 +11,7 @@ pub struct LightFundAccount {
     pub created_at: i64,
     pub tags: u32,
     pub max_members: u8,
-    pub members: Vec<Pubkey>,
+    pub members: Vec<(Pubkey, u32)>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -47,6 +47,7 @@ pub struct UserSpecific {
     pub governance_token_balance: u64,
     pub is_pending: bool,
     pub is_eligible: u8,
+    pub inviter_index: u32,
     pub join_time: i64
 }
 
@@ -60,8 +61,11 @@ pub struct ProposalAggregatorAccount {
 pub struct Proposal {
     pub proposer: Pubkey,
     pub cid: [u8; 59],
+    pub voters_bitmap: (u32, u32),
     pub votes_yes: u64,
     pub votes_no: u64,
+    pub creation_time: i64,
+    pub deadline: i64,
     pub executed: bool,
     pub vec_index: u16,
 }
@@ -89,11 +93,11 @@ pub struct VoteAccount {
     pub voters: Vec<(Pubkey, u8)>
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
-pub struct JoinVoteAccount {
-    pub proposal_index: u8,
-    pub voters: Vec<(Pubkey, u8)>
-}
+// #[derive(BorshSerialize, BorshDeserialize)]
+// pub struct JoinVoteAccount {
+//     pub proposal_index: u8,
+//     pub voters: Vec<(Pubkey, u8)>
+// }
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct IncrementProposalAccount {

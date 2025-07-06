@@ -18,8 +18,7 @@ pub enum FundInstruction {
 
     // tag = 1
     InitProposalInvestment {
-        amounts: Vec<u64>,
-        slippage: Vec<u16>,
+        cid: String,
         deadline: i64,
         fund_name: String,
     },
@@ -133,6 +132,7 @@ pub enum FundInstruction {
     HandleInvition {
         fund_name: String,
         response: u8,
+        inviter_exists: u8,
     },
 
     // tag = 20
@@ -178,15 +178,18 @@ impl FundInstruction {
                 }
             }
             1 => {
-                let (&num_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (amounts, rest) = Self::unpack_amounts(rest, num_of_swaps)?;
-                let (slippage, rest) = Self::unpack_slippage(rest, num_of_swaps)?;
                 let (deadline, rest) = Self::unpack_deadline(rest)?;
+                let (cid_bytes, _rest) = rest.split_at(59 as usize);
+                let cid_raw = cid_bytes
+                    .iter()
+                    .take_while(|&&b| b != 0)
+                    .cloned()
+                    .collect::<Vec<u8>>();
+                let cid = String::from_utf8(cid_raw).unwrap();
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::InitProposalInvestment {
-                    amounts,
-                    slippage,
+                    cid,
                     deadline,
                     fund_name,
                 }
@@ -325,9 +328,10 @@ impl FundInstruction {
             }
             19 => {
                 let (&response, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&inviter_exists, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
-                Self::HandleInvition { fund_name, response }
+                Self::HandleInvition { fund_name, response, inviter_exists }
             }
             20 => {
                 let (&fund_type, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
@@ -382,48 +386,48 @@ impl FundInstruction {
         Ok((amount, rest))
     }
 
-    fn unpack_amounts(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u64>, &[u8]), ProgramError> {
-        if input.len() < BYTE_SIZE_8*(num_of_swaps as usize) {
-            return Err(FundError::InstructionUnpackError.into());
-        }
+    // fn unpack_amounts(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u64>, &[u8]), ProgramError> {
+    //     if input.len() < BYTE_SIZE_8*(num_of_swaps as usize) {
+    //         return Err(FundError::InstructionUnpackError.into());
+    //     }
 
-        let mut amounts: Vec<u64> = Vec::new();
-        let mut input_slice = input;
-        for _i in 0..num_of_swaps {
-            let (amount, rest) = Self::unpack_amount(input_slice)?;
-            amounts.push(amount);
-            input_slice = rest;
-        }
+    //     let mut amounts: Vec<u64> = Vec::new();
+    //     let mut input_slice = input;
+    //     for _i in 0..num_of_swaps {
+    //         let (amount, rest) = Self::unpack_amount(input_slice)?;
+    //         amounts.push(amount);
+    //         input_slice = rest;
+    //     }
 
-        Ok((amounts, input_slice))
-    }
+    //     Ok((amounts, input_slice))
+    // }
 
-    fn unpack_slippage(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u16>, &[u8]), ProgramError> {
-        if input.len() < 2*(num_of_swaps as usize) {
-            return Err(FundError::InstructionUnpackError.into());
-        }
+    // fn unpack_slippage(input: &[u8], num_of_swaps: u8) -> Result<(Vec<u16>, &[u8]), ProgramError> {
+    //     if input.len() < 2*(num_of_swaps as usize) {
+    //         return Err(FundError::InstructionUnpackError.into());
+    //     }
 
-        let mut slippages: Vec<u16> = Vec::new();
-        let mut input_slice = input;
-        for _i in 0..num_of_swaps {
-            let (slippage, rest) = Self::unpack_two_bytes(input_slice)?;
-            slippages.push(slippage);
-            input_slice = rest;
-        }
+    //     let mut slippages: Vec<u16> = Vec::new();
+    //     let mut input_slice = input;
+    //     for _i in 0..num_of_swaps {
+    //         let (slippage, rest) = Self::unpack_two_bytes(input_slice)?;
+    //         slippages.push(slippage);
+    //         input_slice = rest;
+    //     }
 
-        Ok((slippages, input_slice))
-    }
+    //     Ok((slippages, input_slice))
+    // }
 
-    fn unpack_two_bytes(input: &[u8]) -> Result<(u16, &[u8]), ProgramError> {
-        if input.len() < (2 as usize) {
-            return Err(FundError::InstructionUnpackError.into());
-        }
+    // fn unpack_two_bytes(input: &[u8]) -> Result<(u16, &[u8]), ProgramError> {
+    //     if input.len() < (2 as usize) {
+    //         return Err(FundError::InstructionUnpackError.into());
+    //     }
 
-        let (slippage_bytes, rest) = input.split_at(2 as usize);
-        let slippage = u16::from_le_bytes(slippage_bytes.try_into().expect("Invalid amount length"));
+    //     let (slippage_bytes, rest) = input.split_at(2 as usize);
+    //     let slippage = u16::from_le_bytes(slippage_bytes.try_into().expect("Invalid amount length"));
 
-        Ok((slippage, rest))
-    }
+    //     Ok((slippage, rest))
+    // }
 
     fn unpack_deadline(input: &[u8]) -> Result<(i64, &[u8]), ProgramError> {
         if input.len() < BYTE_SIZE_8 {

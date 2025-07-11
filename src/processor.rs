@@ -605,7 +605,7 @@ fn process_handle_invitation(
     if response == 1 {
         fund_data.members.push((*joiner_wallet_info.key, fund_data.members[fund_data.members.len() - 1].1 + 1));
         let current_fund_size = fund_account_info.data_len();
-        let new_fund_size = current_fund_size + 32;
+        let new_fund_size = current_fund_size + 36;
         let current_fund_rent = fund_account_info.lamports();
         let new_fund_rent = rent.minimum_balance(new_fund_size);
 
@@ -700,22 +700,144 @@ fn process_withdraw_or_leave_from_light_fund(
 
     let member_deposit = user_specific.governance_token_balance;
     let total_deposit = fund_data.total_deposit;
-
+    msg!("Fund's Total Deposit before Withdrawal: {}", total_deposit);
+    msg!("Member Deposit before Withdrawal: {}", member_deposit);
     if member_deposit > total_deposit {
         return Err(FundError::InvalidAccountData.into());
+    }
+
+    let wsol_mint = pubkey!("So11111111111111111111111111111111111111112");
+
+    if total_deposit != 0 {
+        let withdraw_percent_u128: u128 = ((stake_percent as u128) * (member_deposit as u128))/(total_deposit as u128);
+        let withdraw_percent = withdraw_percent_u128 as u64;
+        msg!("Withdraw percent overall: {}", withdraw_percent);
+
+        if withdraw_percent != 0 {
+            for i in 0..num_of_tokens {
+                let token_account = spl_token::state::Account::unpack(&vault_ata_infos[i as usize].data.borrow())?;
+                let vault_balance = token_account.amount;
+                msg!("Vault Balance: {}", vault_balance);
+                let amount_to_transfer_u128: u128 = ((vault_balance as u128) * (withdraw_percent as u128))/(100_000_000 as u128);
+                let amount_to_transfer = amount_to_transfer_u128 as u64;
+                msg!("Amount to Transfer: {}", amount_to_transfer);
+
+                if *mint_account_infos[i as usize].key == wsol_mint {
+                    msg!("Withdrawing SOL");
+                    if member_ata_infos[i as usize].data_is_empty() {
+                        invoke(
+                            &spl_associated_token_account::instruction::create_associated_token_account(
+                                member_wallet_info.key,
+                                member_wallet_info.key,
+                                mint_account_infos[i as usize].key,
+                                token_program_info.key,
+                            ),
+                            &[
+                                member_wallet_info.clone(),
+                                member_ata_infos[i as usize].clone(),
+                                token_program_info.clone(),
+                                mint_account_infos[i as usize].clone(),
+                                system_program_info.clone(),
+                                ata_program_info.clone(),
+                                rent_sysvar_info.clone(),
+                            ]
+                        )?;
+                    }
+
+                    invoke_signed(
+                        &spl_token::instruction::transfer(
+                            token_program_info.key,
+                            vault_ata_infos[i as usize].key,
+                            member_ata_infos[i as usize].key,
+                            vault_account_info.key,
+                            &[],
+                            amount_to_transfer
+                        )?,
+                        &[
+                            token_program_info.clone(),
+                            vault_ata_infos[i as usize].clone(),
+                            member_ata_infos[i as usize].clone(),
+                            vault_account_info.clone()
+                        ],
+                        &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
+                    )?;
+
+                    invoke(
+                        &spl_token::instruction::close_account(
+                            token_program_info.key,
+                            member_ata_infos[i as usize].key,
+                            member_wallet_info.key,
+                            member_wallet_info.key,
+                            &[]
+                        )?,
+                        &[
+                            token_program_info.clone(),
+                            member_wallet_info.clone(),
+                            member_ata_infos[i as usize].clone(),
+                            system_program_info.clone(),
+                            ata_program_info.clone(),
+                            rent_sysvar_info.clone()
+                        ]
+                    )?;
+                } else {
+                    msg!("Withdrawing SPL Token");
+                    if member_ata_infos[i as usize].data_is_empty() {
+                        invoke(
+                            &spl_associated_token_account::instruction::create_associated_token_account(
+                                member_wallet_info.key,
+                                member_wallet_info.key,
+                                mint_account_infos[i as usize].key,
+                                token_program_info.key,
+                            ),
+                            &[
+                                member_wallet_info.clone(),
+                                member_ata_infos[i as usize].clone(),
+                                token_program_info.clone(),
+                                mint_account_infos[i as usize].clone(),
+                                system_program_info.clone(),
+                                ata_program_info.clone(),
+                                rent_sysvar_info.clone(),
+                            ]
+                        )?;
+                    }
+
+                    invoke_signed(
+                        &spl_token::instruction::transfer(
+                            token_program_info.key,
+                            vault_ata_infos[i as usize].key,
+                            member_ata_infos[i as usize].key,
+                            vault_account_info.key,
+                            &[],
+                            amount_to_transfer
+                        )?,
+                        &[
+                            token_program_info.clone(),
+                            vault_ata_infos[i as usize].clone(),
+                            member_ata_infos[i as usize].clone(),
+                            vault_account_info.clone()
+                        ],
+                        &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
+                    )?;
+                }
+            }
+        }
     }
 
     let rent = Rent::get()?;
     
     fund_data.total_deposit -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000 as u128)) as u64;
-    msg!("Fund's Total Deposit: {}", fund_data.total_deposit);
+    msg!("Fund's Total Deposit after Withdrawal: {}", fund_data.total_deposit);
 
     if task == 1 {
         fund_data.members.retain(|member| member.0 != *member_wallet_info.key);
         member_data.funds.retain(|user_specific| user_specific.fund != *fund_account_info.key);
 
+        if fund_data.creator_exists && fund_data.members[0 as usize].0 == *member_wallet_info.key {
+            fund_data.creator_exists = false;
+        }
+
         let current_fund_size = fund_account_info.data_len();
-        let new_fund_size = current_fund_size - 32;
+        let new_fund_size = current_fund_size - 36;
         let current_fund_rent = fund_account_info.lamports();
         let new_fund_rent = rent.minimum_balance(new_fund_size);
         
@@ -738,128 +860,13 @@ fn process_withdraw_or_leave_from_light_fund(
             **member_wallet_info.lamports.borrow_mut() += current_user_rent - new_user_rent;
         }
     } else {
-        member_data.funds[matched_index].governance_token_balance -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000 as u128)) as u64;
-        msg!("Member Deposit After Withdrawal: {}", member_data.funds[matched_index].governance_token_balance);
+        if total_deposit != 0 && stake_percent != 0 {
+            member_data.funds[matched_index].governance_token_balance -= (((member_data.funds[matched_index].governance_token_balance as u128) * (stake_percent as u128))/(100_000_000 as u128)) as u64;
+            msg!("Member Deposit After Withdrawal: {}", member_data.funds[matched_index].governance_token_balance);
+        }
     }
     fund_data.serialize(&mut &mut fund_account_info.data.borrow_mut()[..])?;
     member_data.serialize(&mut &mut member_account_info.data.borrow_mut()[..])?;
-
-    if total_deposit == 0 {
-        return Ok(());
-    }
-    
-    let withdraw_percent = ((((stake_percent as u128) * (member_deposit as u128)) as u128)/(total_deposit as u128)) as u64;
-    msg!("Withdraw percent overall: {}", withdraw_percent);
-
-    let wsol_mint = pubkey!("So11111111111111111111111111111111111111112");
-
-    for i in 0..num_of_tokens {
-        let token_account = spl_token::state::Account::unpack(&vault_ata_infos[i as usize].data.borrow())?;
-        let vault_balance = token_account.amount;
-        let amount_to_transfer = (vault_balance * (withdraw_percent / 1_000_000))/100;
-
-        if *mint_account_infos[i as usize].key == wsol_mint {
-            msg!("Bro SOL to hai ye");
-
-            if member_ata_infos[i as usize].data_is_empty() {
-                invoke(
-                    &spl_associated_token_account::instruction::create_associated_token_account(
-                        member_wallet_info.key,
-                        member_wallet_info.key,
-                        mint_account_infos[i as usize].key,
-                        token_program_info.key,
-                    ),
-                    &[
-                        member_wallet_info.clone(),
-                        member_ata_infos[i as usize].clone(),
-                        token_program_info.clone(),
-                        mint_account_infos[i as usize].clone(),
-                        system_program_info.clone(),
-                        ata_program_info.clone(),
-                        rent_sysvar_info.clone(),
-                    ]
-                )?;
-            }
-
-            msg!("Bhai create to ha rha hai");
-
-            invoke_signed(
-                &spl_token::instruction::transfer(
-                    token_program_info.key,
-                    vault_ata_infos[i as usize].key,
-                    member_ata_infos[i as usize].key,
-                    vault_account_info.key,
-                    &[],
-                    amount_to_transfer
-                )?,
-                &[
-                    token_program_info.clone(),
-                    vault_ata_infos[i as usize].clone(),
-                    member_ata_infos[i as usize].clone(),
-                    vault_account_info.clone()
-                ],
-                &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
-            )?;
-
-            invoke(
-                &spl_token::instruction::close_account(
-                    token_program_info.key,
-                    member_ata_infos[i as usize].key,
-                    member_wallet_info.key,
-                    member_wallet_info.key,
-                    &[]
-                )?,
-                &[
-                    token_program_info.clone(),
-                    member_wallet_info.clone(),
-                    member_ata_infos[i as usize].clone(),
-                    system_program_info.clone(),
-                    ata_program_info.clone(),
-                    rent_sysvar_info.clone()
-                ]
-            )?;
-        } else {
-            msg!("Bro SOL na hai ye");
-
-            if member_ata_infos[i as usize].data_is_empty() {
-                invoke(
-                    &spl_associated_token_account::instruction::create_associated_token_account(
-                        member_wallet_info.key,
-                        member_wallet_info.key,
-                        mint_account_infos[i as usize].key,
-                        token_program_info.key,
-                    ),
-                    &[
-                        member_wallet_info.clone(),
-                        member_ata_infos[i as usize].clone(),
-                        token_program_info.clone(),
-                        mint_account_infos[i as usize].clone(),
-                        system_program_info.clone(),
-                        ata_program_info.clone(),
-                        rent_sysvar_info.clone(),
-                    ]
-                )?;
-            }
-
-            invoke_signed(
-                &spl_token::instruction::transfer(
-                    token_program_info.key,
-                    vault_ata_infos[i as usize].key,
-                    member_ata_infos[i as usize].key,
-                    vault_account_info.key,
-                    &[],
-                    amount_to_transfer
-                )?,
-                &[
-                    token_program_info.clone(),
-                    vault_ata_infos[i as usize].clone(),
-                    member_ata_infos[i as usize].clone(),
-                    vault_account_info.clone()
-                ],
-                &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]]
-            )?;
-        }
-    }
 
     msg!("Transferred holdings successfully");
 

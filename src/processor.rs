@@ -132,6 +132,11 @@ pub fn process_instruction<'a>(
             process_withdraw_or_leave_from_light_fund(program_id, accounts, fund_name, task, stake_percent, num_of_tokens)
         }
 
+        FundInstruction::SetExecuting { proposal_index, vec_index, fund_name } => {
+            msg!("Instruction: Set Proposal Executing");
+            process_set_executing(program_id, accounts, proposal_index, vec_index, fund_name)
+        }
+
         _ => Err(FundError::InvalidInstruction.into()),
     }
 }
@@ -2167,12 +2172,15 @@ fn process_init_investment_proposal(
     let system_program_info = next_account_info(accounts_iter)?;
     let new_proposal_aggregator_info = next_account_info(accounts_iter)?;
 
+    msg!("{} {} {}", cid, deadline, fund_name);
+
     if !proposer_account_info.is_signer {
         msg!("[FUND-ERROR] {} {} Wrong signer!(must be your wallet)", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
+    msg!("Fund PDA derived");
     let mut fund_data = LightFundAccount::try_from_slice(&fund_account_info.data.borrow())?;
 
     let is_proposer_member = fund_data
@@ -2201,6 +2209,8 @@ fn process_init_investment_proposal(
         program_id
     );
 
+    msg!("Current Derived");
+
     let (new_proposal_aggregator_pda, new_proposal_aggregator_bump) = Pubkey::find_program_address(
         &[
             b"proposal-aggregator",
@@ -2209,6 +2219,8 @@ fn process_init_investment_proposal(
         ],
         program_id
     );
+
+    msg!("New Derived");
 
     if *proposal_aggregator_info.key != proposal_aggregator_pda || *new_proposal_aggregator_info.key != new_proposal_aggregator_pda {
         msg!("[FUND-ERROR] {} {} Given PDAs doesn't match with the derived ones(Wrong accounts provided).", fund_account_info.key.to_string(), proposer_account_info.key.to_string());
@@ -2240,6 +2252,7 @@ fn process_init_investment_proposal(
 
     // check if new proposal aggregator is required
     if (current_proposal_space + extra_proposal_space) > 10240 as usize {
+        msg!("New is creating");
         // Create Proposal Account
         invoke_signed(
             &system_instruction::create_account(
@@ -2269,7 +2282,7 @@ fn process_init_investment_proposal(
             votes_no: 0 as u64,
             creation_time,
             deadline,
-            executed: false,
+            executed: 0 as u8,
             vec_index: 0 as u16,
             voters_bitmap,
         }];
@@ -2286,6 +2299,7 @@ fn process_init_investment_proposal(
 
         msg!("[FUND-ACTIVITY] {} {} {} Proposal created: ({}, 0) by {}", fund_account_info.key.to_string(), creation_time, fund_name, (current_index + 1), proposer_account_info.key.to_string());
     } else {
+        msg!("Current is enough");
         let new_aggregator_size = extra_proposal_space + current_proposal_space as usize;
         let current_rent_exempt = proposal_aggregator_info.lamports();
         let new_rent_exempt = rent.minimum_balance(new_aggregator_size);
@@ -2317,7 +2331,7 @@ fn process_init_investment_proposal(
             votes_no: 0 as u64,
             creation_time,
             deadline,
-            executed: false,
+            executed: 0 as u8,
             vec_index,
             voters_bitmap,
         });
@@ -2356,7 +2370,7 @@ fn process_vote_on_proposal(
     }
 
     // Pdas derivation
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
     let (proposal_aggregator_pda, _proposal_aggregator_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index], fund_account_info.key.as_ref()], program_id);
 
     // Pdas verification
@@ -2405,6 +2419,12 @@ fn process_vote_on_proposal(
     }
 
     proposal_aggregator_data.proposals[matched_index].voters_bitmap.push((voter_vec_index, vote));
+
+    if vote == 0 {
+        proposal_aggregator_data.proposals[matched_index].votes_no += 1;
+    } else {
+        proposal_aggregator_data.proposals[matched_index].votes_yes += 1;
+    }
 
     let rent = Rent::get()?;
     let current_aggregator_space = proposal_aggregator_info.data_len();
@@ -3004,6 +3024,45 @@ fn process_vote_on_proposal(
 
 //     Ok(())
 // }
+
+fn process_set_executing(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    proposal_index: u8,
+    vec_index: u16,
+    fund_name: String
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let peerfunds_wallet_info = next_account_info(accounts_iter)?;
+    let fund_account_info = next_account_info(accounts_iter)?;
+    let proposal_aggregator_info = next_account_info(accounts_iter)?;
+
+    if !peerfunds_wallet_info.is_signer {
+        return Err(FundError::MissingRequiredSignature.into());
+    }
+
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
+    let (aggregator_pda, _aggregator_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index]], program_id);
+
+    if *fund_account_info.key != fund_pda || *proposal_aggregator_info.key != aggregator_pda {
+        return Err(FundError::InvalidAccountData.into());
+    }
+
+    let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+
+    let (matched_index, _proposal) = proposal_aggregator_data
+        .proposals
+        .iter()
+        .enumerate()
+        .find(|proposal| proposal.1.vec_index == vec_index)
+        .ok_or(FundError::InvalidAccountData)?;
+
+    proposal_aggregator_data.proposals[matched_index].executed = 1 as u8;
+
+    proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
+
+    Ok(())
+}
 
 // fn process_execute_proposal(
 //     program_id: &Pubkey,

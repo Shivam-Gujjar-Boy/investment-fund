@@ -22,6 +22,12 @@ pub enum FundInstruction {
         deadline: i64,
         fund_name: String,
     },
+
+    SetExecuting {
+        proposal_index: u8,
+        vec_index: u16,
+        fund_name: String,
+    },
     
     // tag = 2
     Vote {
@@ -175,7 +181,7 @@ impl FundInstruction {
             }
             1 => {
                 let (deadline, rest) = Self::unpack_deadline(rest)?;
-                let (cid_bytes, _rest) = rest.split_at(59 as usize);
+                let (cid_bytes, rest) = rest.split_at(59 as usize);
                 let cid_raw = cid_bytes
                     .iter()
                     .take_while(|&&b| b != 0)
@@ -340,6 +346,14 @@ impl FundInstruction {
                 let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
 
                 Self::WithdrawOrLeaveFromLightFund { fund_name, task, stake_percent, num_of_tokens }
+            }
+            22 => {
+                let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (vec_bytes, rest) = rest.split_at(2);
+                let fund_name = std::str::from_utf8(rest).map_err(|_| FundError::InstructionUnpackError)?.to_string();
+                let vec_index = u16::from_le_bytes(vec_bytes.try_into().expect("Wrong Vec Index"));
+
+                Self::SetExecuting { proposal_index, vec_index, fund_name }
             }
             _ => {
                 return Err(FundError::InstructionUnpackError.into());

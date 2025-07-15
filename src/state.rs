@@ -68,6 +68,7 @@ pub struct Proposal {
     pub deadline: i64,
     pub executed: u8,
     pub vec_index: u16,
+    pub swaps_status: u16,
     pub voters_bitmap: Vec<(u32, u8)>,
 }
 

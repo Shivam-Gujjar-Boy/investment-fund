@@ -21,6 +21,7 @@ pub enum FundInstruction {
         cid: String,
         deadline: i64,
         fund_name: String,
+        merkel_root: String,
     },
 
     SetExecutingOrExecuted {
@@ -183,6 +184,7 @@ impl FundInstruction {
             }
             1 => {
                 let (deadline, rest) = Self::unpack_deadline(rest)?;
+
                 let (cid_bytes, rest) = rest.split_at(59 as usize);
                 let cid_raw = cid_bytes
                     .iter()
@@ -190,12 +192,22 @@ impl FundInstruction {
                     .cloned()
                     .collect::<Vec<u8>>();
                 let cid = String::from_utf8(cid_raw).unwrap();
+
+                let (merkel_bytes, rest) = rest.split_at(32 as usize);
+                let merkel_raw = merkel_bytes
+                    .iter()
+                    .take_while(|&&b| b != 0)
+                    .cloned()
+                    .collect::<Vec<u8>>();
+                let merkel_root = String::from_utf8(merkel_raw).unwrap();
+                
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::InitProposalInvestment {
                     cid,
                     deadline,
                     fund_name,
+                    merkel_root,
                 }
             }
             2 => {

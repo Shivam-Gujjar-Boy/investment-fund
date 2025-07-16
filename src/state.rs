@@ -62,6 +62,7 @@ pub struct ProposalAggregatorAccount {
 pub struct Proposal {
     pub proposer: Pubkey,
     pub cid: [u8; 59],
+    pub merkel_root: [u8; 32],
     pub votes_yes: u64,
     pub votes_no: u64,
     pub creation_time: i64,

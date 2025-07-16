@@ -52,9 +52,9 @@ pub fn process_instruction<'a>(
             process_init_deposit_token(program_id, accounts,is_unwrapped_sol, amount, mint_amount, fund_name, fund_type)
         }
 
-        FundInstruction::InitProposalInvestment { cid, deadline, fund_name } => {
+        FundInstruction::InitProposalInvestment { cid, deadline, fund_name, merkel_root} => {
             msg!("Instruction: Init Proposal");
-            process_init_investment_proposal(program_id, accounts, fund_name, cid, deadline)
+            process_init_investment_proposal(program_id, accounts, fund_name, cid, deadline, merkel_root)
         }
 
         FundInstruction::Vote {vote, proposal_index, vec_index, fund_name} => {
@@ -2162,6 +2162,7 @@ fn process_init_investment_proposal(
     fund_name: String,
     cid: String,
     deadline: i64,
+    merkel_root: String,
 ) -> ProgramResult {
     let creation_time = Clock::get()?.unix_timestamp;
 
@@ -2250,6 +2251,11 @@ fn process_init_investment_proposal(
     let len = bytes.len().min(59);
     array[..len].copy_from_slice(&bytes[..len]);
 
+    let merkel_bytes = merkel_root.as_bytes();
+    let mut merkel_array = [0u8; 32];
+    let merkel_len = merkel_bytes.len().min(32);
+    merkel_array[..merkel_len].copy_from_slice(&merkel_bytes[..merkel_len]);
+
     // check if new proposal aggregator is required
     if (current_proposal_space + extra_proposal_space) > 10240 as usize {
         msg!("New is creating");
@@ -2278,6 +2284,7 @@ fn process_init_investment_proposal(
         let proposals_vec: Vec<Proposal> = vec![ Proposal {
             proposer: *proposer_account_info.key,
             cid: array,
+            merkel_root: merkel_array,
             votes_yes: 1 as u64,
             votes_no: 0 as u64,
             creation_time,
@@ -2328,6 +2335,7 @@ fn process_init_investment_proposal(
         proposal_aggregator_data.proposals.push( Proposal {
             proposer: *proposer_account_info.key,
             cid: array,
+            merkel_root: merkel_array,
             votes_yes: 1 as u64,
             votes_no: 0 as u64,
             creation_time,
@@ -3073,8 +3081,8 @@ fn process_execute_proposal(
     let fund_account_info = next_account_info(account_iter)?; // fund account .................................
     let vault_account_info = next_account_info(account_iter)?; // fund's vault account ........................
     let proposal_aggregator_info = next_account_info(account_iter)?; // proposal account ......................
-    let token_program_2022_info = next_account_info(account_iter)?; // tokn program 2022 ......................
-    let token_program_std_info = next_account_info(account_iter)?; // tokn program 2020 .......................
+    let token_program_2022_info = next_account_info(account_iter)?; // token program 2022 .....................
+    let token_program_std_info = next_account_info(account_iter)?; // token program 2020 ......................
     let raydium_clmm_program = next_account_info(account_iter)?; // raydium clmm program ......................
     let amm_config = next_account_info(account_iter)?; // Amm config account ..................................
     let pool_state = next_account_info(account_iter)?; // Pool state account ..................................

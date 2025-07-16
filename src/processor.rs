@@ -2231,7 +2231,7 @@ fn process_init_investment_proposal(
     // Rent Calculation
     let rent = Rent::get()?;
     let current_proposal_space = proposal_aggregator_info.data_len();
-    let extra_proposal_space = 137 as usize;
+    let extra_proposal_space = 169 as usize;
 
     let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
 

@@ -46,10 +46,11 @@ pub enum FundInstruction {
 
     // tag = 4
     ExecuteProposalInvestment {
-        swap_number: u8,
         fund_name: String,
         proposal_index: u8,
-        vec_index: u8
+        vec_index: u16,
+        amount: u64,
+        slippage: u16,
     },
 
     // tag = 5
@@ -216,18 +217,22 @@ impl FundInstruction {
                 Self::AddFundMember { fund_name, vec_index }
             }
             4 => {
-                let (&swap_number, rest) = rest
-                    .split_first()
-                    .ok_or(FundError::InstructionUnpackError)?;
+                // let (&swap_number, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                let (&vec_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                // let (&includes_sol, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (vec_index_bytes, rest) = rest.split_at(2);
+                let (amount, rest) = Self::unpack_amount(rest)?;
+                let (slippage_bytes, rest) = rest.split_at(2);
+                let slippage = u16::from_le_bytes(slippage_bytes.try_into().expect("Invalid Slippage"));
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                let vec_index = u16::from_le_bytes(vec_index_bytes.try_into().expect("Invalid Vec Index"));
 
                 Self::ExecuteProposalInvestment {
-                    swap_number,
                     fund_name,
                     proposal_index,
-                    vec_index
+                    vec_index,
+                    amount,
+                    slippage
                 }
             }
             5 => {

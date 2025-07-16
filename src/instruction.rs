@@ -1,7 +1,7 @@
 use solana_program::{
     program_error::ProgramError
 };
-use crate::errors::FundError;
+use crate::{errors::FundError, state::MerkleRoot};
 use borsh::{BorshSerialize, BorshDeserialize};
 
 const BYTE_SIZE_8: usize = 8;
@@ -21,7 +21,7 @@ pub enum FundInstruction {
         cid: String,
         deadline: i64,
         fund_name: String,
-        merkel_root: String,
+        merkel_bytes: MerkleRoot,
     },
 
     SetExecutingOrExecuted {
@@ -194,20 +194,15 @@ impl FundInstruction {
                 let cid = String::from_utf8(cid_raw).unwrap();
 
                 let (merkel_bytes, rest) = rest.split_at(32 as usize);
-                let merkel_raw = merkel_bytes
-                    .iter()
-                    .take_while(|&&b| b != 0)
-                    .cloned()
-                    .collect::<Vec<u8>>();
-                let merkel_root = String::from_utf8(merkel_raw).unwrap();
-                
+                let merkel_root = MerkleRoot(merkel_bytes.try_into().unwrap());
+
                 let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
 
                 Self::InitProposalInvestment {
                     cid,
                     deadline,
                     fund_name,
-                    merkel_root,
+                    merkel_bytes: merkel_root,
                 }
             }
             2 => {

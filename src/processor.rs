@@ -15,7 +15,7 @@ use spl_associated_token_account::instruction::create_associated_token_account;
 // };
 // use spl_token_metadata_interface;
 // use spl_token_2022::state::Mint;
-use crate::state::{IncrementProposalAccount, LightFundAccount, UserSpecific};
+use crate::state::{IncrementProposalAccount, LightFundAccount, MerkleRoot, UserSpecific};
 use crate::{
     errors::FundError,
     instruction::FundInstruction,
@@ -52,9 +52,9 @@ pub fn process_instruction<'a>(
             process_init_deposit_token(program_id, accounts,is_unwrapped_sol, amount, mint_amount, fund_name, fund_type)
         }
 
-        FundInstruction::InitProposalInvestment { cid, deadline, fund_name, merkel_root} => {
+        FundInstruction::InitProposalInvestment { cid, deadline, fund_name, merkel_bytes} => {
             msg!("Instruction: Init Proposal");
-            process_init_investment_proposal(program_id, accounts, fund_name, cid, deadline, merkel_root)
+            process_init_investment_proposal(program_id, accounts, fund_name, cid, deadline, merkel_bytes)
         }
 
         FundInstruction::Vote {vote, proposal_index, vec_index, fund_name} => {
@@ -2162,7 +2162,7 @@ fn process_init_investment_proposal(
     fund_name: String,
     cid: String,
     deadline: i64,
-    merkel_root: String,
+    merkel_bytes: MerkleRoot,
 ) -> ProgramResult {
     let creation_time = Clock::get()?.unix_timestamp;
 
@@ -2251,10 +2251,10 @@ fn process_init_investment_proposal(
     let len = bytes.len().min(59);
     array[..len].copy_from_slice(&bytes[..len]);
 
-    let merkel_bytes = merkel_root.as_bytes();
-    let mut merkel_array = [0u8; 32];
-    let merkel_len = merkel_bytes.len().min(32);
-    merkel_array[..merkel_len].copy_from_slice(&merkel_bytes[..merkel_len]);
+    // let merkel_bytes = merkel_root.as_bytes();
+    // let mut merkel_array = [0u8; 32];
+    // let merkel_len = merkel_bytes.len().min(32);
+    // merkel_array[..merkel_len].copy_from_slice(&merkel_bytes[..merkel_len]);
 
     // check if new proposal aggregator is required
     if (current_proposal_space + extra_proposal_space) > 10240 as usize {
@@ -2284,7 +2284,7 @@ fn process_init_investment_proposal(
         let proposals_vec: Vec<Proposal> = vec![ Proposal {
             proposer: *proposer_account_info.key,
             cid: array,
-            merkel_root: merkel_array,
+            merkel_root: merkel_bytes.0,
             votes_yes: 1 as u64,
             votes_no: 0 as u64,
             creation_time,
@@ -2335,7 +2335,7 @@ fn process_init_investment_proposal(
         proposal_aggregator_data.proposals.push( Proposal {
             proposer: *proposer_account_info.key,
             cid: array,
-            merkel_root: merkel_array,
+            merkel_root: merkel_bytes.0,
             votes_yes: 1 as u64,
             votes_no: 0 as u64,
             creation_time,

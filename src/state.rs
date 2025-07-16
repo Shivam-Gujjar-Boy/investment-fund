@@ -58,6 +58,9 @@ pub struct ProposalAggregatorAccount {
     pub proposals: Vec<Proposal>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, BorshSerialize, BorshDeserialize)]
+pub struct MerkleRoot(pub [u8; 32]);
+
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct Proposal {
     pub proposer: Pubkey,

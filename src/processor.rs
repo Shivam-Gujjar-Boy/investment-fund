@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::vec;
+use sha2::{Digest, Sha256};
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::instruction::{Instruction, AccountMeta};
 use solana_program::pubkey;
@@ -67,9 +68,9 @@ pub fn process_instruction<'a>(
         //     process_init_rent_account(program_id, accounts)
         // }
 
-        FundInstruction::ExecuteProposalInvestment { fund_name, proposal_index, vec_index, amount, slippage} => {
+        FundInstruction::ExecuteProposalInvestment { fund_name, proposal_index, vec_index, swap_index, no_of_swaps, merkel_proof, amount, slippage} => {
             msg!("Instruction: Execute Proposal");
-            process_execute_proposal(program_id, accounts, fund_name, proposal_index, vec_index, amount, slippage)
+            process_execute_proposal(program_id, accounts, fund_name, proposal_index, vec_index, swap_index, no_of_swaps, merkel_proof, amount, slippage)
         }
 
         // FundInstruction::InitJoinProposal { fund_name } => {
@@ -3071,6 +3072,9 @@ fn process_execute_proposal(
     fund_name: String,
     proposal_index: u8,
     vec_index: u16,
+    swap_index: u8,
+    no_of_swaps: u8,
+    merkel_proof: Vec<[u8; 32]>,
     amount: u64,
     slippage: u16,
 ) -> ProgramResult {
@@ -3124,6 +3128,51 @@ fn process_execute_proposal(
     if current_time <= deadline {
         msg!("The proposal is still under voting.");
         return Err(FundError::InvalidAccountData.into());
+    }
+
+    let mut swap_hasher = Sha256::new();
+
+    swap_hasher.update(input_token_account.key.to_bytes());
+    swap_hasher.update(output_token_account.key.to_bytes());
+    swap_hasher.update(&amount.to_le_bytes());
+    swap_hasher.update(&slippage.to_le_bytes());
+
+    let swap_hash: [u8; 32] = swap_hasher.finalize().into();
+    let mut index = swap_index as usize;
+
+    // --- Merkle Root Verification ---
+
+    let mut swap_hasher1 = Sha256::new();
+
+    swap_hasher1.update(input_token_account.key.to_bytes());
+    swap_hasher1.update(output_token_account.key.to_bytes());
+    swap_hasher1.update(&amount.to_le_bytes());
+    swap_hasher1.update(&slippage.to_le_bytes());
+
+    let mut calculated_merkel_root = swap_hasher1.finalize().into();
+    let mut merkle_hasher = Sha256::new();
+
+    for node in merkel_proof.iter() {
+        if index % 2 == 0 {
+            // Current hash is left child
+            merkle_hasher.update(&swap_hash);
+            merkle_hasher.update(&node[..]);
+        } else {
+            // Current hash is right child
+            merkle_hasher.update(&node[..]);
+            merkle_hasher.update(&swap_hash);
+        }
+        let intermediate: [u8; 32] = merkle_hasher.finalize().into();
+        calculated_merkel_root = intermediate;
+        merkle_hasher = Sha256::new();
+        index /= 2;
+    }
+
+    let merkel_root = proposal_aggregator_data.proposals[vec_index as usize].merkel_root;
+
+    if calculated_merkel_root != merkel_root {
+        msg!("The merkel root calculated don't match with the one in the proposal.");
+        return Err(FundError::InvalidSwapDetails.into());
     }
 
     let vote_yes = proposal_aggregator_data.proposals[vec_index as usize].votes_yes;

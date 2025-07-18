@@ -13,6 +13,7 @@ no-entrypoint = []
 solana-program = "1.18.4"
 borsh = "0.10"
 borsh-derive = "0.10"
+sha2 = "0.10"
 spl-token = { version = "=3.5.0", features = ["no-entrypoint"]}
 spl-token-2022 = { version = "=0.9.0", features = ["no-entrypoint"]}
 spl-token-metadata-interface = "0.2.0"

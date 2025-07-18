@@ -925,6 +925,7 @@ dependencies = [
  "borsh-derive 0.10.4",
  "hex",
  "mpl-token-metadata",
+ "sha2 0.10.8",
  "solana-program",
  "solana-security-txt",
  "spl-associated-token-account",

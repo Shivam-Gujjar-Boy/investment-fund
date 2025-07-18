@@ -50,6 +50,9 @@ pub enum FundInstruction {
         fund_name: String,
         proposal_index: u8,
         vec_index: u16,
+        swap_index: u8,
+        no_of_swaps: u8,
+        merkel_proof: Vec<[u8; 32]>,
         amount: u64,
         slippage: u16,
     },
@@ -228,16 +231,31 @@ impl FundInstruction {
                 let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 // let (&includes_sol, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (vec_index_bytes, rest) = rest.split_at(2);
+                let (&swap_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
+                let (&no_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (amount, rest) = Self::unpack_amount(rest)?;
                 let (slippage_bytes, rest) = rest.split_at(2);
                 let slippage = u16::from_le_bytes(slippage_bytes.try_into().expect("Invalid Slippage"));
-                let fund_name = std::str::from_utf8(rest).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+
+                let mut merkel_proof: Vec<[u8; 32]> = Vec::new();
+                let mut merkel_data = rest;
+                for i in 0..no_of_swaps  {
+                    let (hash_bytes, rest) = rest.split_at(((i as usize)+1)*32);
+                    let proof_hash = hash_bytes.try_into().unwrap();
+                    merkel_data = rest;
+                    merkel_proof.push(proof_hash);
+                }
+
+                let fund_name = std::str::from_utf8(merkel_data).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
                 let vec_index = u16::from_le_bytes(vec_index_bytes.try_into().expect("Invalid Vec Index"));
 
                 Self::ExecuteProposalInvestment {
                     fund_name,
                     proposal_index,
                     vec_index,
+                    swap_index,
+                    no_of_swaps,
+                    merkel_proof,
                     amount,
                     slippage
                 }

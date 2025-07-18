@@ -36,6 +36,7 @@ pub enum FundError {
     InvalidNumberOfWithdrawals,
     InvalidStakePercent,
     InvalidSigner,
+    InvalidSwapDetails,
 }
 
 impl From<FundError> for ProgramError {

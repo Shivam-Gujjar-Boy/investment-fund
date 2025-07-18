@@ -133,9 +133,9 @@ pub fn process_instruction<'a>(
             process_withdraw_or_leave_from_light_fund(program_id, accounts, fund_name, task, stake_percent, num_of_tokens)
         }
 
-        FundInstruction::SetExecutingOrExecuted { proposal_index, vec_index, fund_name, set } => {
+        FundInstruction::SetExecuting { proposal_index, vec_index, fund_name } => {
             msg!("Instruction: Set Proposal Executing");
-            process_set_executing_or_executed(program_id, accounts, proposal_index, vec_index, fund_name, set)
+            process_set_executing(program_id, accounts, proposal_index, vec_index, fund_name)
         }
 
         _ => Err(FundError::InvalidInstruction.into()),
@@ -2950,15 +2950,15 @@ fn process_cancel_investment_proposal(
         return Err(FundError::InvalidProposerInfo.into());
     }
 
-    // if proposal.deadline < current_time {
-    //     return Err(FundError::DeadlineReached.into());
-    // }
+    if proposal.deadline < current_time {
+        return Err(FundError::DeadlineReached.into());
+    }
 
     // Remove proposal from aggregator
     let rent = Rent::get()?;
     let current_aggregator_size = proposal_aggregator_info.data_len();
     msg!("Current Aggregator Size = {}", current_aggregator_size);
-    let new_aggregator_size = current_aggregator_size - (132 + proposal.voters_bitmap.len() * 5);
+    let new_aggregator_size = current_aggregator_size - (164 + proposal.voters_bitmap.len() * 5);
     let current_aggregator_rent = proposal_aggregator_info.lamports();
     let new_aggregator_rent = rent.minimum_balance(new_aggregator_size);
     let new_aggregator_rent_for_proposer = rent.minimum_balance(new_aggregator_size + proposal.voters_bitmap.len() * 5);
@@ -3022,13 +3022,12 @@ fn process_cancel_investment_proposal(
 //     Ok(())
 // }
 
-fn process_set_executing_or_executed(
+fn process_set_executing(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     proposal_index: u8,
     vec_index: u16,
     fund_name: String,
-    set: u8,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
     let peerfunds_wallet_info = next_account_info(accounts_iter)?;
@@ -3055,11 +3054,11 @@ fn process_set_executing_or_executed(
         .find(|proposal| proposal.1.vec_index == vec_index)
         .ok_or(FundError::InvalidAccountData)?;
 
-    if (proposal.executed == 0 && set != 1) || (proposal.executed == 1 && set != 2) || (proposal.executed == 2) {
+    if proposal.executed != 0 {
         return Err(FundError::InvalidProposalAccount.into());
     }
 
-    proposal_aggregator_data.proposals[matched_index].executed = set;
+    proposal_aggregator_data.proposals[matched_index].executed = 1;
 
     proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
 
@@ -3113,7 +3112,7 @@ fn process_execute_proposal(
         return Err(FundError::InvalidProposalAccount.into());
     }
 
-    let proposal_aggregator_data= ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+    let mut proposal_aggregator_data= ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
     let is_executed = proposal_aggregator_data.proposals[vec_index as usize].executed;
 
     // if proposal is executed/not initiated then return
@@ -3130,6 +3129,8 @@ fn process_execute_proposal(
         return Err(FundError::InvalidAccountData.into());
     }
 
+    // --- Merkle Root Verification Start ---
+
     let mut swap_hasher = Sha256::new();
 
     swap_hasher.update(input_token_account.key.to_bytes());
@@ -3137,30 +3138,20 @@ fn process_execute_proposal(
     swap_hasher.update(&amount.to_le_bytes());
     swap_hasher.update(&slippage.to_le_bytes());
 
-    let swap_hash: [u8; 32] = swap_hasher.finalize().into();
     let mut index = swap_index as usize;
 
-    // --- Merkle Root Verification ---
-
-    let mut swap_hasher1 = Sha256::new();
-
-    swap_hasher1.update(input_token_account.key.to_bytes());
-    swap_hasher1.update(output_token_account.key.to_bytes());
-    swap_hasher1.update(&amount.to_le_bytes());
-    swap_hasher1.update(&slippage.to_le_bytes());
-
-    let mut calculated_merkel_root = swap_hasher1.finalize().into();
+    let mut calculated_merkel_root: [u8; 32] = swap_hasher.finalize().into();
     let mut merkle_hasher = Sha256::new();
 
     for node in merkel_proof.iter() {
         if index % 2 == 0 {
             // Current hash is left child
-            merkle_hasher.update(&swap_hash);
+            merkle_hasher.update(&calculated_merkel_root);
             merkle_hasher.update(&node[..]);
         } else {
             // Current hash is right child
             merkle_hasher.update(&node[..]);
-            merkle_hasher.update(&swap_hash);
+            merkle_hasher.update(&calculated_merkel_root);
         }
         let intermediate: [u8; 32] = merkle_hasher.finalize().into();
         calculated_merkel_root = intermediate;
@@ -3175,6 +3166,8 @@ fn process_execute_proposal(
         return Err(FundError::InvalidSwapDetails.into());
     }
 
+    // --- Merkle Root Verification Done ---
+
     let vote_yes = proposal_aggregator_data.proposals[vec_index as usize].votes_yes;
     let vote_no = proposal_aggregator_data.proposals[vec_index as usize].votes_no;
 
@@ -3188,13 +3181,13 @@ fn process_execute_proposal(
     }
 
     // if proposal not in majority, error
-    if vote_yes <= vote_no {
+    if vote_yes < vote_no {
         msg!("Not enough votes favouring the trades");
         return Err(FundError::InvalidInstruction.into());
     }
 
     // check fund account
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"fund", fund_name.as_bytes()], program_id);
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
     if *fund_account_info.key != fund_pda {
         msg!("Wrong Fund details");
         return Err(FundError::InvalidFundDetails.into());
@@ -3289,7 +3282,21 @@ fn process_execute_proposal(
 
     invoke_signed(&swap_cpi_instruction, &account_infos, &[&[b"vault", fund_account_info.key.as_ref(), &[vault_bump]]])?;
 
-    // proposal_aggregator_data.proposals[vec_index as usize].executed = true;
+    let (matched_index, _proposal) = proposal_aggregator_data
+        .proposals
+        .iter()
+        .enumerate()
+        .find(|proposal| proposal.1.vec_index == vec_index)
+        .ok_or(FundError::InvalidProposalAccount)?;
+
+    if swap_index + 1 == no_of_swaps {
+        proposal_aggregator_data.proposals[matched_index].executed = 2;
+    }
+
+    let mut swap_status = proposal_aggregator_data.proposals[matched_index].swaps_status;
+    swap_status = swap_status | (1 << swap_index);
+    proposal_aggregator_data.proposals[matched_index].swaps_status = swap_status;
+
     proposal_aggregator_data.serialize(&mut &mut proposal_aggregator_info.data.borrow_mut()[..])?;
 
     msg!("[FUND-ACTIVITY] {} {} {} Proposal executed: ({}, {})", fund_account_info.key.to_string(), current_time, fund_name, proposal_index, vec_index);

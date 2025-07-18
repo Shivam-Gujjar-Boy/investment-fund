@@ -226,9 +226,7 @@ impl FundInstruction {
                 Self::AddFundMember { fund_name, vec_index }
             }
             4 => {
-                // let (&swap_number, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (&proposal_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
-                // let (&includes_sol, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (vec_index_bytes, rest) = rest.split_at(2);
                 let (&swap_index, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let (&no_of_swaps, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
@@ -236,10 +234,11 @@ impl FundInstruction {
                 let (slippage_bytes, rest) = rest.split_at(2);
                 let slippage = u16::from_le_bytes(slippage_bytes.try_into().expect("Invalid Slippage"));
 
+                let (&num_of_proofs, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let mut merkel_proof: Vec<[u8; 32]> = Vec::new();
                 let mut merkel_data = rest;
-                for i in 0..no_of_swaps  {
-                    let (hash_bytes, rest) = rest.split_at(((i as usize)+1)*32);
+                for i in 0..num_of_proofs  {
+                    let (hash_bytes, rest) = rest.split_at(((i as usize) + 1) * 32);
                     let proof_hash = hash_bytes.try_into().unwrap();
                     merkel_data = rest;
                     merkel_proof.push(proof_hash);

@@ -1,11 +1,12 @@
 use std::io::Write;
+use std::str::FromStr;
 use std::vec;
-use sha2::{Digest, Sha256};
+// use sha2::{Digest, Sha256};
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::instruction::{Instruction, AccountMeta};
-use solana_program::pubkey;
+use solana_program::{pubkey, hash::hashv};
 use solana_program::{
-    account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey:: Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar}
+    account_info::{next_account_info, AccountInfo}, clock::Clock, entrypoint::ProgramResult, msg, program::{invoke, invoke_signed}, program_pack::Pack, pubkey::Pubkey, system_instruction, sysvar::{rent::Rent, Sysvar}
 };
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token::state::Account as TokenAccount;
@@ -2252,11 +2253,6 @@ fn process_init_investment_proposal(
     let len = bytes.len().min(59);
     array[..len].copy_from_slice(&bytes[..len]);
 
-    // let merkel_bytes = merkel_root.as_bytes();
-    // let mut merkel_array = [0u8; 32];
-    // let merkel_len = merkel_bytes.len().min(32);
-    // merkel_array[..merkel_len].copy_from_slice(&merkel_bytes[..merkel_len]);
-
     // check if new proposal aggregator is required
     if (current_proposal_space + extra_proposal_space) > 10240 as usize {
         msg!("New is creating");
@@ -3039,11 +3035,13 @@ fn process_set_executing(
     }
 
     let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
-    let (aggregator_pda, _aggregator_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index]], program_id);
+    let (aggregator_pda, _aggregator_bump) = Pubkey::find_program_address(&[b"proposal-aggregator", &[proposal_index], fund_account_info.key.as_ref()], program_id);
 
     if *fund_account_info.key != fund_pda || *proposal_aggregator_info.key != aggregator_pda {
         return Err(FundError::InvalidAccountData.into());
     }
+
+    msg!("Fund and Aggregator are correct");
 
     let mut proposal_aggregator_data = ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
 
@@ -3102,7 +3100,9 @@ fn process_execute_proposal(
         return Err(FundError::MissingRequiredSignature.into());
     }
 
-    if payer_info.key.to_string() != String::from("BA19YT7ryTxJY14J2CaY7xzAZWyR9afwDRUXgB7fMXEh") {
+    const EXPECTED_PAYER: &str = "BA19YT7ryTxJY14J2CaY7xzAZWyR9afwDRUXgB7fMXEh";
+    let expected_payer_key = Pubkey::from_str(EXPECTED_PAYER).unwrap();
+    if *payer_info.key != expected_payer_key {
         return Err(FundError::InvalidSigner.into());
     }
 
@@ -3112,54 +3112,86 @@ fn process_execute_proposal(
         return Err(FundError::InvalidProposalAccount.into());
     }
 
-    let mut proposal_aggregator_data= ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
-    let is_executed = proposal_aggregator_data.proposals[vec_index as usize].executed;
-
-    // if proposal is executed/not initiated then return
-    if is_executed != 1 {
-        msg!("Proposal execution isn't initiated yet or it is already executed");
-        return Err(FundError::InvalidAccountData.into());
+    // check fund account
+    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
+    msg!("Fund Name: {}", fund_name);
+    msg!("{} {}", fund_pda, fund_account_info.key);
+    if *fund_account_info.key != fund_pda {
+        msg!("Wrong Fund details");
+        return Err(FundError::InvalidFundDetails.into());
     }
 
-    let deadline = proposal_aggregator_data.proposals[vec_index as usize].deadline;
+    let mut proposal_aggregator_data= ProposalAggregatorAccount::try_from_slice(&proposal_aggregator_info.data.borrow())?;
+    let proposal = proposal_aggregator_data
+        .proposals
+        .iter()
+        .find(|proposal| proposal.vec_index == vec_index)
+        .ok_or(FundError::InvalidAccountData)?;
+
+
+    // let is_executed = proposal.executed;
+
+    // // if proposal is executed/not initiated then return
+    // if is_executed != 1 {
+    //     msg!("Proposal execution isn't initiated yet or it is already executed");
+    //     return Err(FundError::InvalidAccountData.into());
+    // }
+
+    let deadline = proposal.deadline / 1000;
 
     // if voting deadline hasn't reached yet, return
     if current_time <= deadline {
-        msg!("The proposal is still under voting.");
+        msg!("The proposal is still under voting. {}, {}", current_time, deadline);
         return Err(FundError::InvalidAccountData.into());
     }
 
     // --- Merkle Root Verification Start ---
 
-    let mut swap_hasher = Sha256::new();
+    // let mut swap_hasher = Sha256::new();
 
-    swap_hasher.update(input_token_account.key.to_bytes());
-    swap_hasher.update(output_token_account.key.to_bytes());
-    swap_hasher.update(&amount.to_le_bytes());
-    swap_hasher.update(&slippage.to_le_bytes());
+    // swap_hasher.update(input_token_mint.key.as_ref());
+    // swap_hasher.update(output_token_mint.key.as_ref());
+    // swap_hasher.update(&amount.to_le_bytes());
+    // swap_hasher.update(&slippage.to_le_bytes());
+
+    // let mut calculated_merkel_root: [u8; 32] = swap_hasher.finalize().into();
+
+    let mut calculated_merkel_root = hashv(&[
+        input_token_mint.key.as_ref(),
+        output_token_mint.key.as_ref(),
+        &amount.to_le_bytes(),
+        &slippage.to_le_bytes(),
+    ]).to_bytes();
+
+    // let mut merkle_hasher = Sha256::new();
 
     let mut index = swap_index as usize;
 
-    let mut calculated_merkel_root: [u8; 32] = swap_hasher.finalize().into();
-    let mut merkle_hasher = Sha256::new();
-
     for node in merkel_proof.iter() {
-        if index % 2 == 0 {
-            // Current hash is left child
-            merkle_hasher.update(&calculated_merkel_root);
-            merkle_hasher.update(&node[..]);
+        calculated_merkel_root = if index % 2 == 0 {
+            hashv(&[&calculated_merkel_root, node]).to_bytes()
         } else {
-            // Current hash is right child
-            merkle_hasher.update(&node[..]);
-            merkle_hasher.update(&calculated_merkel_root);
-        }
-        let intermediate: [u8; 32] = merkle_hasher.finalize().into();
-        calculated_merkel_root = intermediate;
-        merkle_hasher = Sha256::new();
+            hashv(&[node, &calculated_merkel_root]).to_bytes()
+        };
         index /= 2;
     }
 
-    let merkel_root = proposal_aggregator_data.proposals[vec_index as usize].merkel_root;
+    // for node in merkel_proof.iter() {
+    //     if index % 2 == 0 {
+    //         // Current hash is left child
+    //         merkle_hasher.update(&calculated_merkel_root);
+    //         merkle_hasher.update(&node[..]);
+    //     } else {
+    //         // Current hash is right child
+    //         merkle_hasher.update(&node[..]);
+    //         merkle_hasher.update(&calculated_merkel_root);
+    //     }
+    //     calculated_merkel_root = merkle_hasher.finalize().into();
+    //     merkle_hasher = Sha256::new();
+    //     index /= 2;
+    // }
+
+    let merkel_root = proposal.merkel_root;
 
     if calculated_merkel_root != merkel_root {
         msg!("The merkel root calculated don't match with the one in the proposal.");
@@ -3168,8 +3200,8 @@ fn process_execute_proposal(
 
     // --- Merkle Root Verification Done ---
 
-    let vote_yes = proposal_aggregator_data.proposals[vec_index as usize].votes_yes;
-    let vote_no = proposal_aggregator_data.proposals[vec_index as usize].votes_no;
+    let vote_yes = proposal.votes_yes;
+    let vote_no = proposal.votes_no;
 
     let fund_data = LightFundAccount::try_from_slice(&fund_account_info.data.borrow())?;
     let strength = fund_data.members.len();
@@ -3184,13 +3216,6 @@ fn process_execute_proposal(
     if vote_yes < vote_no {
         msg!("Not enough votes favouring the trades");
         return Err(FundError::InvalidInstruction.into());
-    }
-
-    // check fund account
-    let (fund_pda, _fund_bump) = Pubkey::find_program_address(&[b"light-fund", fund_name.as_bytes()], program_id);
-    if *fund_account_info.key != fund_pda {
-        msg!("Wrong Fund details");
-        return Err(FundError::InvalidFundDetails.into());
     }
 
     // verify vault account
@@ -3218,7 +3243,6 @@ fn process_execute_proposal(
     }
 
     let discriminator: &[u8] = &[0x2b, 0x04, 0xed, 0x0b, 0x1a, 0xc9, 0x1e, 0x62];
-    msg!("discriminator length: {}", discriminator.len());
     let min_amount_out = amount
         .checked_mul(10000u64 - (slippage as u64))
         .unwrap()

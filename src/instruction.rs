@@ -1,5 +1,5 @@
 use solana_program::{
-    program_error::ProgramError
+    program_error::ProgramError, msg
 };
 use crate::{errors::FundError, state::MerkleRoot};
 use borsh::{BorshSerialize, BorshDeserialize};
@@ -24,6 +24,7 @@ pub enum FundInstruction {
         merkel_bytes: MerkleRoot,
     },
 
+    // tag = 22
     SetExecuting {
         proposal_index: u8,
         vec_index: u16,
@@ -165,6 +166,8 @@ impl FundInstruction {
             .split_first()
             .ok_or(FundError::InvaildVaultAccount)?;
 
+        msg!("{}", rest.len());
+
         Ok(match tag {
             0 => {
                 let (privacy, rest) = Self::unpack_members(rest)?;
@@ -237,14 +240,14 @@ impl FundInstruction {
                 let (&num_of_proofs, rest) = rest.split_first().ok_or(FundError::InstructionUnpackError)?;
                 let mut merkel_proof: Vec<[u8; 32]> = Vec::new();
                 let mut merkel_data = rest;
-                for i in 0..num_of_proofs  {
-                    let (hash_bytes, rest) = rest.split_at(((i as usize) + 1) * 32);
+                for _i in 0..num_of_proofs  {
+                    let (hash_bytes, rest) = merkel_data.split_at(32);
                     let proof_hash = hash_bytes.try_into().unwrap();
                     merkel_data = rest;
                     merkel_proof.push(proof_hash);
                 }
 
-                let fund_name = std::str::from_utf8(merkel_data).map_err(|_| ProgramError::InvalidInstructionData)?.to_string();
+                let fund_name = std::str::from_utf8(merkel_data).map_err(|_| FundError::InstructionUnpackError)?.to_string();
                 let vec_index = u16::from_le_bytes(vec_index_bytes.try_into().expect("Invalid Vec Index"));
 
                 Self::ExecuteProposalInvestment {
